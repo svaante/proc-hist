@@ -1,13 +1,19 @@
 ;;; proc-hist.el --- History managment for processes -*- lexical-binding: t -*-
 
+(require 'vc)
+
 (defgroup proc-hist nil
   "TODO"
   :group 'extensions)
+
+(defcustom proc-hist-commands '(compile)
+  "TDO")
 
 (cl-defstruct (proc-hist-item (:type list))
   proc command status start-time end-time log directory vc interactive)
 
 (defvar proc-hist--items nil)
+(defvar proc-hist--this-command nil)
 
 (defun proc-hist--time-format ()
   (format-time-string "%Y-%m-%dT%T"))
@@ -31,7 +37,7 @@
         (proc-hist--log proc (1+ n))
       filename)))
 
-(defun proc-histp (proc)
+(defun proc-hist-advicep (proc)
   (and
    (stringp (proc-hist--command proc))
    t))
@@ -53,8 +59,10 @@
                  :end-time nil
                  :log (proc-hist--log proc)
                  :directory default-directory
-                 :vc nil
-                 :interactive last-command)))
+                 :vc (vc-working-revision
+                      default-directory
+                      (vc-responsible-backend default-directory))
+                 :interactive proc-hist--this-command)))
       (push item proc-hist--items)
       item)))
 
@@ -80,17 +88,47 @@
 (defun proc-hist--set-process-filter (oldfn proc fn)
   (funcall oldfn
            proc
-           (if (proc-histp proc) (proc-hist--create-filter proc fn) fn)))
+           (if (proc-hist-advicep proc)
+               (proc-hist--create-filter proc fn)
+             fn)))
 
 (defun proc-hist--set-process-sentinel (oldfn proc fn)
   (funcall oldfn
            proc
-           (if (proc-histp proc) (proc-hist--create-sentinel proc fn) fn)))
+           (if (proc-hist-advicep proc)
+               (proc-hist--create-sentinel proc fn)
+             fn)))
+
+(defun proc-hist--advice (oldfn &rest args)
+  (setq proc-hist--this-command oldfn)
+  (advice-add 'set-process-sentinel :around #'proc-hist--set-process-sentinel)
+  (advice-add 'set-process-filter :around #'proc-hist--set-process-filter)
+  (apply oldfn args)
+  (advice-remove 'set-process-sentinel #'proc-hist--set-process-sentinel)
+  (advice-remove 'set-process-filter #'proc-hist--set-process-filter))
+
+(defvar proc-hist--adviced nil)
+
+(defun proc-hist--advice-commands ()
+  (seq-do
+   (lambda (command)
+     (advice-add command :around #'proc-hist--advice)
+     ;; Store advice commands for removal on -1
+     (push proc-hist--adviced proc-hist--adviced))
+   proc-hist-commands))
+
+(defun proc-hist--advice-remove ()
+  (seq-do
+   (lambda (command)
+     (advice-remove command #'proc-hist--advice))
+   proc-hist-commands)
+  (setq proc-hist-commands nil))
 
 ;;; Completion
 
 (defun proc-hist-annotate (table)
   (lambda (candidate)
+    ;;
     " TEST"))
 
 (defun proc-hist--candidates ()
@@ -101,6 +139,7 @@
               (key base-key)
               (n 1))
          (while (gethash key table)
+           ;; TODO: style <%d> part
            (setq key (format "%s <%d>" key n)
                  n (1+ n)))
          (puthash key item table)))
@@ -108,8 +147,7 @@
     table))
 
 (defun proc-hist-completing-read ()
-  (let* ((table (proc-hist--candidates))
-         (_ (message "%s" table))
+  (let* ((table (proc-hist--candidates)))
          (collection
           (lambda (string predicate action)
             (if (eq action 'metadata)
@@ -124,7 +162,7 @@
 
 ;;; Commands
 
-(defun proc-hist-open (item)
+(defun proc-hist-dwim (item)
   (interactive
    (list
     (funcall #'proc-hist-completing-read)))
@@ -136,9 +174,6 @@
   :global t :group 'proc-hist
   (if proc-hist-mode
       ;; add hooks
-      (progn
-        (advice-add 'set-process-filter :around #'proc-hist--set-process-filter)
-        (advice-add 'set-process-sentinel :around #'proc-hist--set-process-sentinel))
+      (proc-hist--advice-commands)
     ;; remove hooks
-    (advice-remove 'set-process-filter #'proc-hist--set-process-filter)
-    (advice-remove 'set-process-sentinel #'proc-hist--set-process-sentinel)))
+    (proc-hist--advice-remove)))
