@@ -87,26 +87,42 @@
            proc
            (if (proc-histp proc) (proc-hist--create-sentinel proc fn) fn)))
 
-(defun proc-hist-annotate (items)
+;;; Completion
+
+(defun proc-hist-annotate (table)
   (lambda (candidate)
     " TEST"))
 
+(defun proc-hist--candidates ()
+  (let ((table (make-hash-table :test #'equal)))
+    (seq-do
+     (lambda (item)
+       (let* ((base-key (proc-hist-item-command item))
+              (key base-key)
+              (n 1))
+         (while (gethash key table)
+           (setq key (format "%s <%d>" key n)
+                 n (1+ n)))
+         (puthash key item table)))
+     proc-hist--items)
+    table))
+
 (defun proc-hist-completing-read ()
-  (let* ((items
-          (mapcar (lambda (item)
-                    (cons (proc-hist-item-command item) item))
-                  proc-hist--items))
+  (let* ((table (proc-hist--candidates))
+         (_ (message "%s" table))
          (collection
           (lambda (string predicate action)
             (if (eq action 'metadata)
                 `(metadata
                   (category . proc-hist)
-                  (annotation-function . ,(proc-hist-annotate items)))
+                  (annotation-function . ,(proc-hist-annotate table)))
               (complete-with-action action
-                                    items
+                                    table
                                     string
                                     predicate)))))
-    (completing-read "proc-hist: " collection nil t)))
+    (gethash (completing-read "proc-hist: " collection nil t) table)))
+
+;;; Commands
 
 (defun proc-hist-open (item)
   (interactive
