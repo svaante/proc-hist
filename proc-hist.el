@@ -6,11 +6,11 @@
   "TODO"
   :group 'extensions)
 
-(defcustom proc-hist-commands '(compile)
+(defcustom proc-hist-commands '(compile async-shell-command)
   "TDO")
 
 (cl-defstruct (proc-hist-item (:type list))
-  proc command status start-time end-time log directory vc interactive)
+  proc last-buffer command status start-time end-time log directory vc interactive)
 
 (defvar proc-hist--items nil)
 (defvar proc-hist--this-command nil)
@@ -53,6 +53,7 @@
       item
     (let ((item (make-proc-hist-item
                  :proc proc
+                 :last-buffer nil
                  :command (proc-hist--command proc)
                  :status nil
                  :start-time (proc-hist--time-format)
@@ -66,6 +67,12 @@
       (push item proc-hist--items)
       item)))
 
+(defun proc-hist--add-last-buffer (item)
+  (when-let* ((proc (proc-hist-item-proc item))
+              (last-buffer (process-buffer proc)))
+    (setf (proc-hist-item-last-buffer item)
+          last-buffer)))
+
 (defun proc-hist--create-sentinel (proc fn)
   (let ((item (proc-hist--add-proc proc)))
     (lambda (proc signal)
@@ -77,11 +84,13 @@
               (proc-hist--time-format))
         (setf (proc-hist-item-proc item)
               nil))
+      (proc-hist--add-last-buffer item)
       (funcall fn proc signal))))
 
 (defun proc-hist--create-filter (proc fn)
   (let ((item (proc-hist--add-proc proc)))
     (lambda (proc string)
+      (proc-hist--add-last-buffer item)
       (write-region string nil (proc-hist-item-log item) 'append)
       (funcall fn proc string))))
 
@@ -140,14 +149,14 @@
               (n 1))
          (while (gethash key table)
            ;; TODO: style <%d> part
-           (setq key (format "%s <%d>" key n)
+           (setq key (format "%s <%d>" base-key n)
                  n (1+ n)))
          (puthash key item table)))
      proc-hist--items)
     table))
 
 (defun proc-hist-completing-read ()
-  (let* ((table (proc-hist--candidates)))
+  (let* ((table (proc-hist--candidates))
          (collection
           (lambda (string predicate action)
             (if (eq action 'metadata)
@@ -166,7 +175,19 @@
   (interactive
    (list
     (funcall #'proc-hist-completing-read)))
-  (message "proc-hist-open:%s" item))
+  (let ((buffer (proc-hist-item-last-buffer item)))
+    (if (and buffer
+             (eq (proc-hist-item-proc item) (get-buffer-process buffer))
+             (buffer-live-p buffer))
+        (switch-to-buffer buffer)
+      (find-file (proc-hist-item-log item)))))
+
+(defun proc-hist-rerun (item)
+  (interactive
+   (list
+    (funcall #'proc-hist-completing-read)))
+  (let ((default-directory (proc-hist-item-directory item)))
+      (funcall (proc-hist-item-interactive item) (proc-hist-item-command item))))
 
 ;;;###autoload
 (define-minor-mode proc-hist-mode
