@@ -122,9 +122,11 @@
   (setq proc-hist--this-command oldfn)
   (advice-add 'set-process-sentinel :around #'proc-hist--set-process-sentinel)
   (advice-add 'set-process-filter :around #'proc-hist--set-process-filter)
-  (apply oldfn args)
+  ;; Protect advice removal
+  (unwind-protect
+      (apply oldfn args)
   (advice-remove 'set-process-sentinel #'proc-hist--set-process-sentinel)
-  (advice-remove 'set-process-filter #'proc-hist--set-process-filter))
+  (advice-remove 'set-process-filter #'proc-hist--set-process-filter)))
 
 (defvar proc-hist--adviced nil)
 
