@@ -6,29 +6,42 @@
   "TODO"
   :group 'extensions)
 
-(defcustom proc-hist-commands '(compile async-shell-command)
-  "TDO")
+(defcustom proc-hist-commands
+  '((compile
+     :args-to-command car
+     :item-to-args proc-hist--command-to-list)
+    (async-shell-command
+     :args-to-command car
+     :item-to-args proc-hist--command-to-list))
+  "TODO")
+
+(defcustom proc-hist-logs-folder "/tmp"
+  "TODO")
 
 (cl-defstruct (proc-hist-item (:type list))
-  proc last-buffer command status start-time end-time log directory vc interactive)
+  proc
+  last-buffer
+  command
+  status
+  start-time
+  end-time
+  log
+  directory
+  vc
+  this-command)
 
 (defvar proc-hist--items nil)
 (defvar proc-hist--this-command nil)
+(defvar proc-hist--command nil)
 
 (defun proc-hist--time-format ()
   (format-time-string "%Y-%m-%dT%T"))
 
-(defun proc-hist--command (proc)
-  (let ((command (process-command proc)))
-    ;; TODO: handle network process
-    ;; TODO: should use some kind of white-list
-    (when (and command (listp command))
-      (mapconcat 'identity (seq-drop command 2) " "))))
-
 (defun proc-hist--log (proc &optional n)
   (let* ((n (or n 0))
          (filename (concat
-                   (format "/tmp/%s_%s"
+                   (format "%s%s_%s.log"
+                           (file-name-as-directory proc-hist-logs-folder)
                            (process-id proc)
                            (proc-hist--time-format))
                    (when (> n 0)
@@ -38,9 +51,7 @@
       filename)))
 
 (defun proc-hist-advicep (proc)
-  (and
-   (stringp (proc-hist--command proc))
-   t))
+   t)
 
 (defun proc-hist--find (proc)
   (seq-find
@@ -54,7 +65,7 @@
     (let ((item (make-proc-hist-item
                  :proc proc
                  :last-buffer nil
-                 :command (proc-hist--command proc)
+                 :command proc-hist--command
                  :status nil
                  :start-time (proc-hist--time-format)
                  :end-time nil
@@ -63,7 +74,7 @@
                  :vc (vc-working-revision
                       default-directory
                       (vc-responsible-backend default-directory))
-                 :interactive proc-hist--this-command)))
+                 :this-command proc-hist--this-command)))
       (push item proc-hist--items)
       item)))
 
@@ -72,7 +83,7 @@
               (last-buffer (process-buffer proc)))
     ;; Remove `:last-buffer' for each other item
     ;; TODO: Should split active buffers in memory and only check those
-    (do-seq
+    (seq-do
      (lambda (item)
        (when (eq (proc-hist-item-last-buffer item)
                  last-buffer)
@@ -104,6 +115,15 @@
       (write-region string nil (proc-hist-item-log item) 'append)
       (funcall fn proc string))))
 
+;; Util
+(defun proc-hist--command-to-list (item)
+  (list (proc-hist-item-command item)))
+
+(defun proc-hist--advice-name (command)
+  (make-symbol
+   (format "%s-proc-hist-advice" command)))
+
+;; Advice
 (defun proc-hist--set-process-filter (oldfn proc fn)
   (funcall oldfn
            proc
@@ -118,32 +138,48 @@
                (proc-hist--create-sentinel proc fn)
              fn)))
 
-(defun proc-hist--advice (oldfn &rest args)
-  (setq proc-hist--this-command oldfn)
-  (advice-add 'set-process-sentinel :around #'proc-hist--set-process-sentinel)
-  (advice-add 'set-process-filter :around #'proc-hist--set-process-filter)
-  ;; Protect advice removal
-  (unwind-protect
-      (apply oldfn args)
-  (advice-remove 'set-process-sentinel #'proc-hist--set-process-sentinel)
-  (advice-remove 'set-process-filter #'proc-hist--set-process-filter)))
+(defun proc-hist--create-advice (command args-to-command)
+  (lambda (oldfn &rest args)
+    ;; Set vars
+    (setq proc-hist--this-command command)
+    (setq proc-hist--command (funcall args-to-command args))
+    ;; Set advice
+    (advice-add 'set-process-sentinel :around #'proc-hist--set-process-sentinel)
+    (advice-add 'set-process-filter :around #'proc-hist--set-process-filter)
+    ;; Protect advice removal
+    (unwind-protect
+        (apply oldfn args)
+      (advice-remove 'set-process-sentinel #'proc-hist--set-process-sentinel)
+      (advice-remove 'set-process-filter #'proc-hist--set-process-filter))))
 
 (defvar proc-hist--adviced nil)
 
 (defun proc-hist--advice-commands ()
   (seq-do
-   (lambda (command)
-     (advice-add command :around #'proc-hist--advice)
-     ;; Store advice commands for removal on -1
-     (push proc-hist--adviced proc-hist--adviced))
+   (lambda (command-def)
+     (pcase-let* ((`(,command
+                     :args-to-command ,args-to-command
+                     :item-to-args ,item-to-args) command-def)
+                  (advice-name (proc-hist--advice-name command)))
+       ;; Rudimentary sanity check
+       (unless (and (functionp args-to-command)
+                    (functionp item-to-args))
+         (user-error "Invalid `proc-hist-commands' command definition `%s'"
+                     command-def))
+       (add-function :around (symbol-function command)
+                     (proc-hist--create-advice command args-to-command)
+                     `((name . ,advice-name)))
+       ;; Store advice commands for removal on -1
+       (push (cons command advice-name) proc-hist--adviced)))
    proc-hist-commands))
 
 (defun proc-hist--advice-remove ()
   (seq-do
-   (lambda (command)
-     (advice-remove command #'proc-hist--advice))
-   proc-hist-commands)
-  (setq proc-hist-commands nil))
+   (lambda (advice)
+     (pcase-let ((`(,command . ,advice-name) advice))
+       (remove-function (symbol-function command) advice-name)))
+   proc-hist--adviced)
+  (setq proc-hist--adviced nil))
 
 ;;; Completion
 
@@ -179,7 +215,19 @@
                                     table
                                     string
                                     predicate)))))
-    (gethash (completing-read "proc-hist: " collection nil t) table)))
+    (gethash (completing-read "Command: " collection nil t) table)))
+
+(defun proc-hist-completing-read-command ()
+  (let ((collection
+         (lambda (string predicate action)
+           (if (eq action 'metadata)
+               `(metadata
+                 (category . commands))
+             (complete-with-action action
+                                   proc-hist-commands
+                                   string
+                                   predicate)))))
+    (intern (completing-read "Command: " collection nil t))))
 
 ;;; Commands
 
@@ -199,7 +247,25 @@
    (list
     (funcall #'proc-hist-completing-read)))
   (let ((default-directory (proc-hist-item-directory item)))
-      (funcall (proc-hist-item-interactive item) (proc-hist-item-command item))))
+    (apply (proc-hist-item-this-command item)
+           (thread-first
+             (proc-hist-item-this-command item)
+             (alist-get proc-hist-commands)
+             (plist-get :item-to-args)
+             (funcall item)))))
+
+(defun proc-hist-rerun-as (item command)
+  (interactive
+   (list
+    (funcall #'proc-hist-completing-read)
+    (funcall #'proc-hist-completing-read-command)))
+  (let ((default-directory (proc-hist-item-directory item)))
+    (apply command
+           (thread-first
+             command
+             (alist-get proc-hist-commands)
+             (plist-get :item-to-args)
+             (funcall item)))))
 
 ;;;###autoload
 (define-minor-mode proc-hist-mode
