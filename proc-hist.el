@@ -70,6 +70,16 @@
 (defun proc-hist--add-last-buffer (item)
   (when-let* ((proc (proc-hist-item-proc item))
               (last-buffer (process-buffer proc)))
+    ;; Remove `:last-buffer' for each other item
+    ;; TODO: Should split active buffers in memory and only check those
+    (do-seq
+     (lambda (item)
+       (when (eq (proc-hist-item-last-buffer item)
+                 last-buffer)
+         (setf (proc-hist-item-last-buffer item)
+               nil)))
+     proc-hist--items)
+    ;; Set `:last-buffer' to item
     (setf (proc-hist-item-last-buffer item)
           last-buffer)))
 
