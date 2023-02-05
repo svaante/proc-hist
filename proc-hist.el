@@ -112,7 +112,7 @@
   (let ((item (proc-hist--add-proc proc)))
     (lambda (proc string)
       (proc-hist--add-last-buffer item)
-      (write-region string nil (proc-hist-item-log item) 'append)
+      (write-region string nil (proc-hist-item-log item) 'append 'no-echo)
       (funcall fn proc string))))
 
 ;; Util
@@ -181,14 +181,6 @@
    proc-hist--adviced)
   (setq proc-hist--adviced nil))
 
-
-(defun proc-hist--fake-kill (item)
-  (when-let ((proc (proc-hist-item-proc item)))
-    (setq proc-hist--fake-kill-active t)
-    (unwind-protect
-        (let ((sentinel-fn (process-sentinel))
-
-  )
 
 ;;; Completion
 
