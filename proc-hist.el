@@ -35,7 +35,7 @@
 (defvar proc-hist--command nil)
 
 (defun proc-hist--time-format ()
-  (format-time-string "%Y-%m-%dT%T"))
+  (format-time-string "%Y-%m-%d %T"))
 
 (defun proc-hist--log (proc &optional n)
   (let* ((n (or n 0))
@@ -181,12 +181,46 @@
    proc-hist--adviced)
   (setq proc-hist--adviced nil))
 
+
+(defun proc-hist--fake-kill (item)
+  (when-let ((proc (proc-hist-item-proc item)))
+    (setq proc-hist--fake-kill-active t)
+    (unwind-protect
+        (let ((sentinel-fn (process-sentinel))
+
+  )
+
 ;;; Completion
 
 (defun proc-hist-annotate (table)
   (lambda (candidate)
-    ;;
-    " TEST"))
+    (let* ((item (gethash candidate table)))
+      (concat (propertize " " 'display '(space :align-to center))
+              (propertize (abbreviate-file-name
+                           (proc-hist-item-directory item))
+                          'face 'dired-directory)
+              " "
+              (propertize (proc-hist-item-start-time item) 'face 'org-date)
+              " "
+              (let ((active (not (proc-hist-item-end-time item))))
+                (propertize
+                 (format-seconds
+                  "%yy %dd %hh %mm %ss%z"
+                  (- (if active
+                         (time-to-seconds)
+                       (thread-first (proc-hist-item-end-time item)
+                                     (parse-time-string)
+                                     (encode-time)
+                                     (float-time)))
+                     (thread-first (proc-hist-item-start-time item)
+                                   (parse-time-string)
+                                   (encode-time)
+                                   (float-time))))
+                 'face
+                 (cond
+                  (active 'default)
+                  ((zerop (proc-hist-item-status item)) 'success)
+                  (t 'error))))))))
 
 (defun proc-hist--candidates ()
   (let ((table (make-hash-table :test #'equal)))
