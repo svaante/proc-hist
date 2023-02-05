@@ -116,6 +116,7 @@
       (proc-hist--add-last-buffer item)
       (write-region string nil (proc-hist-item-log item) 'append 'no-echo)
       (funcall fn proc string))))
+      (write-region string nil (proc-hist-item-log item) 'append 'no-echo)
 
 ;; Util
 (defun proc-hist--command-to-list (item)
