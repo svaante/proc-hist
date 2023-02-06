@@ -71,9 +71,11 @@
                  :end-time nil
                  :log (proc-hist--log proc)
                  :directory default-directory
-                 :vc (vc-working-revision
-                      default-directory
-                      (vc-responsible-backend default-directory))
+                 :vc (if (file-remote-p default-directory)
+                         ""
+                       ;; BUG: for some reason this hangs on remote files
+                       (or (vc-working-revision default-directory 'Git)
+                           ""))
                  :this-command proc-hist--this-command)))
       (push item proc-hist--items)
       item)))
@@ -183,22 +185,29 @@
 
 
 ;;; Completion
+(defconst proc-hist--max-cand-width 40)
+
+(defun proc-hist--truncate (string length)
+  (truncate-string-to-width string length 0 ?\s "..."))
 
 (defun proc-hist-annotate (table)
   (lambda (candidate)
-    (let* ((item (gethash candidate table)))
-      (concat (propertize " " 'display '(space :align-to center))
-              (propertize (abbreviate-file-name
-                           (proc-hist-item-directory item))
-                          'face 'dired-directory)
-              " "
-              (propertize (proc-hist-item-start-time item) 'face 'org-date)
-              " "
-              (let ((active (not (proc-hist-item-end-time item))))
-                (propertize
+    (let* ((item (gethash candidate table))
+           (space-width (- proc-hist--max-cand-width
+                           (string-width candidate))))
+      (concat (propertize " " 'display `(space ,:width ,space-width))
+              (propertize
+               (proc-hist--truncate
+                (abbreviate-file-name
+                 (proc-hist-item-directory item))
+                40)
+               'face 'dired-directory)
+              "  "
+               (propertize
+               (proc-hist--truncate
                  (format-seconds
                   "%yy %dd %hh %mm %ss%z"
-                  (- (if active
+                  (- (if (not (proc-hist-item-end-time item))
                          (time-to-seconds)
                        (thread-first (proc-hist-item-end-time item)
                                      (parse-time-string)
@@ -207,23 +216,43 @@
                      (thread-first (proc-hist-item-start-time item)
                                    (parse-time-string)
                                    (encode-time)
-                                   (float-time))))
-                 'face
-                 (cond
-                  (active 'default)
-                  ((zerop (proc-hist-item-status item)) 'success)
-                  (t 'error))))))))
+                                   (float-time))
+                     -0.000001))
+                 10)
+                'face
+                (cond
+                 ((not (proc-hist-item-end-time item)) 'default)
+                 ((zerop (proc-hist-item-status item)) 'success)
+                 (t 'error)))
+              "  "
+              (propertize
+               (proc-hist--truncate
+                (proc-hist-item-start-time item)
+                20)
+                'face 'org-date)
+              "  "
+              (propertize
+                (proc-hist-item-vc item)
+                'face 'org-date)
+              ))))
 
 (defun proc-hist--candidates ()
   (let ((table (make-hash-table :test #'equal)))
     (seq-do
      (lambda (item)
-       (let* ((base-key (proc-hist-item-command item))
-              (key base-key)
+       (let* ((dup-format " <%d>")
+              (base-key (proc-hist-item-command item))
+              (key (truncate-string-to-width
+                    base-key
+                    (- proc-hist--max-cand-width
+                       (string-width dup-format))
+                    0 nil "..."))
               (n 1))
          (while (gethash key table)
            ;; TODO: style <%d> part
-           (setq key (format "%s <%d>" base-key n)
+           (setq key (concat base-key
+                             (propertize (format " <%d>" n)
+                                         'face 'shadow))
                  n (1+ n)))
          (puthash key item table)))
      proc-hist--items)
