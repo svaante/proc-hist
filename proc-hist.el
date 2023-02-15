@@ -12,7 +12,10 @@
      :item-to-args proc-hist--command-to-list)
     (async-shell-command
      :args-to-command car
-     :item-to-args proc-hist--command-to-list))
+     :item-to-args proc-hist--command-to-list)
+    (proc-hist-eshell-send-input
+     :args-to-command proc-hist-eshell-input
+     :item-to-args proc-hist-eshell-insert))
   "TODO")
 
 (defcustom proc-hist-logs-folder "/tmp"
@@ -130,8 +133,10 @@
       (when (proc-hist-item-proc-filter item)
         (funcall (proc-hist-item-proc-filter item) proc string)))))
 
+
 (defun proc-hist--set-process-filter (oldfn proc fn)
-  (when proc
+  (if-let ((item (proc-hist--find proc)))
+      (setf (proc-hist-item-proc-filter item) fn)
     (funcall oldfn
              proc
              (if (proc-hist-advicep proc)
@@ -139,12 +144,21 @@
                fn))))
 
 (defun proc-hist--set-process-sentinel (oldfn proc fn)
-  (when proc
+  (if-let ((item (proc-hist--find proc)))
+      (setf (proc-hist-item-proc-sentinel item) fn)
     (funcall oldfn
              proc
              (if (proc-hist-advicep proc)
                  (proc-hist--create-sentinel proc fn)
                fn))))
+
+(defun proc-hist--create-make-process (oldfn &rest args)
+  (let ((proc (apply oldfn args)))
+    (when-let ((sentinel (process-sentinel proc)))
+      (set-process-sentinel proc sentinel))
+    (when-let ((filter (process-filter proc)))
+      (set-process-filter proc filter))
+    proc))
 
 ;;; Kill/Fake
 (defun proc-hist--create-process-status (proc)
@@ -172,7 +186,7 @@
                   `((name . proc-hist-fake-kill)))
     (unwind-protect
         (when-let ((fn (proc-hist-item-proc-sentinel item)))
-          (funcall fn
+          (funcall f
                    (proc-hist-item-proc item)
                    "Paused.\n"))
       (advice-remove 'process-status 'proc-hist-fake-kill)
@@ -182,7 +196,7 @@
       (setf (proc-hist-item-proc-sentinel item) nil)
       (setf (proc-hist-item-proc-filter item) nil))))
 
-(defun proc-hist--create-make-process (item)
+(defun proc-hist--create-attatch-make-process (item)
   (lambda (oldfn &rest args)
     (if (proc-hist-item-proc item)
         (progn
@@ -205,22 +219,22 @@
    (list
     (funcall #'proc-hist-completing-read)))
   (advice-add 'make-process :around
-              (proc-hist--create-make-process item)
-              `((name . proc-hist--create-make-process)))
+              (proc-hist--create-attatch-make-process item)
+              `((name . proc-hist--create-attatch-make-process)))
   (unwind-protect
-      (when-let ((command (thread-first
-                            (proc-hist-item-this-command item)
-                            (alist-get proc-hist-commands)
-                            (plist-get :item-to-args)
-                            (funcall item))))
-        (apply (proc-hist-item-this-command item) command)
+      (when-let ((args (thread-first
+                         (proc-hist-item-this-command item)
+                         (alist-get proc-hist-commands)
+                         (plist-get :item-to-args)
+                         (funcall item))))
+        (apply (proc-hist-item-this-command item) args)
         (when-let ((filter (proc-hist-item-proc-filter item)))
           (funcall filter
                    (proc-hist-item-proc item)
                    (with-temp-buffer
                      (insert-file-contents (proc-hist-item-log item))
                      (buffer-string)))))
-    (advice-remove 'make-process 'proc-hist--create-make-process)))
+    (advice-remove 'make-process 'proc-hist--create-attatch-make-process)))
 
 ;; Util
 (defun proc-hist--command-to-list (item)
@@ -229,6 +243,20 @@
 (defun proc-hist--advice-name (command)
   (make-symbol
    (format "%s-proc-hist-advice" command)))
+
+(defun proc-hist-eshell-send-input (&rest args)
+  (interactive "P")
+  (apply 'eshell-send-input args))
+
+(defun proc-hist-eshell-input (&rest _)
+  (buffer-substring-no-properties
+   eshell-last-input-start
+   (1- eshell-last-input-end)))
+
+(defun proc-hist-eshell-insert (item)
+  (goto-char (point-max))
+  (kill-line)
+  (insert (proc-hist-item-command item)))
 
 ;;; Completion
 (defconst proc-hist--max-cand-width 40)
@@ -386,11 +414,13 @@
     ;; Set advice
     (advice-add 'set-process-sentinel :around #'proc-hist--set-process-sentinel)
     (advice-add 'set-process-filter :around #'proc-hist--set-process-filter)
+    (advice-add 'make-process :around #'proc-hist--create-make-process)
     ;; Protect advice removal
     (unwind-protect
         (apply oldfn args)
       (advice-remove 'set-process-sentinel #'proc-hist--set-process-sentinel)
-      (advice-remove 'set-process-filter #'proc-hist--set-process-filter))))
+      (advice-remove 'set-process-filter #'proc-hist--set-process-filter)
+      (advice-remove 'make-process #'proc-hist--create-make-process))))
 
 (defvar proc-hist--adviced nil)
 
