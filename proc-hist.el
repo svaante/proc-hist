@@ -1,5 +1,6 @@
 ;;; proc-hist.el --- History managment for processes -*- lexical-binding: t -*-
 
+(require 'subr-x)
 (require 'vc)
 
 (defgroup proc-hist nil
@@ -12,10 +13,7 @@
      :item-to-args proc-hist--command-to-list)
     (async-shell-command
      :args-to-command car
-     :item-to-args proc-hist--command-to-list)
-    (proc-hist-eshell-send-input
-     :args-to-command proc-hist-eshell-input
-     :item-to-args proc-hist-eshell-insert))
+     :item-to-args proc-hist--command-to-list))
   "TODO")
 
 (defcustom proc-hist-logs-folder "/tmp"
@@ -43,8 +41,6 @@
   this-command)
 
 (defvar proc-hist--items nil)
-(defvar proc-hist--this-command nil)
-(defvar proc-hist--command nil)
 
 (defun proc-hist--time-format ()
   (format-time-string "%Y-%m-%d %T"))
@@ -62,22 +58,28 @@
         (proc-hist--log proc (1+ n))
       filename)))
 
-(defun proc-hist-advicep (proc)
-  proc)
-
 (defun proc-hist--find (proc)
-  (seq-find
-   (lambda (item)
-     (equal proc (proc-hist-item-proc item)))
-   proc-hist--items))
+  (when proc
+    (seq-find
+     (lambda (item)
+       (equal proc (proc-hist-item-proc item)))
+     proc-hist--items)))
 
-(defun proc-hist--add-proc (proc)
+(defun proc-hist--process-command (proc)
+  (when-let ((proc)
+             (command-list (process-command proc)))
+     (and command-list
+          (mapconcat 'identity command-list " "))))
+
+(defun proc-hist--add-proc (proc &optional command spawn-command)
   (if-let ((item (proc-hist--find proc)))
       item
     (let ((item (make-proc-hist-item
                  :proc proc
                  :last-buffer nil
-                 :command proc-hist--command
+                 :command (or command
+                              (proc-hist--process-command proc)
+                              "UNKNOWN")
                  :status nil
                  :start-time (proc-hist--time-format)
                  :end-time nil
@@ -88,7 +90,7 @@
                        ;; BUG: for some reason this hangs on remote files
                        (or (vc-working-revision default-directory 'Git)
                            ""))
-                 :this-command proc-hist--this-command)))
+                 :this-command (or spawn-command null))))
       (push item proc-hist--items)
       item)))
 
@@ -108,10 +110,10 @@
     (setf (proc-hist-item-last-buffer item)
           last-buffer)))
 
-(defun proc-hist--create-sentinel (proc fn)
-  (let ((item (proc-hist--add-proc proc)))
-    (setf (proc-hist-item-proc-sentinel item) fn)
-    (lambda (proc signal)
+(defun proc-hist--create-sentinel (item)
+  (setf (proc-hist-item-proc-sentinel item)
+        (process-sentinel (proc-hist-item-proc item)))
+  (lambda (proc signal)
       (when (and (memq (process-status proc) '(exit signal))
                  item)
         (setf (proc-hist-item-status item)
@@ -122,43 +124,36 @@
               nil))
       (proc-hist--add-last-buffer item)
       (when (proc-hist-item-proc-sentinel item)
-        (funcall (proc-hist-item-proc-sentinel item) proc signal)))))
+        (funcall (proc-hist-item-proc-sentinel item) proc signal))))
 
-(defun proc-hist--create-filter (proc fn)
-  (let ((item (proc-hist--add-proc proc)))
-    (setf (proc-hist-item-proc-filter item) fn)
-    (lambda (proc string)
-      (proc-hist--add-last-buffer item)
-      (write-region string nil (proc-hist-item-log item) 'append 'no-echo)
-      (when (proc-hist-item-proc-filter item)
-        (funcall (proc-hist-item-proc-filter item) proc string)))))
+(defun proc-hist--create-filter (item)
+  (setf (proc-hist-item-proc-filter item)
+        (process-filter (proc-hist-item-proc item)))
+  (lambda (proc string)
+    (proc-hist--add-last-buffer item)
+    (write-region string nil (proc-hist-item-log item) 'append 'no-echo)
+    (when (proc-hist-item-proc-filter item)
+      (funcall (proc-hist-item-proc-filter item) proc string))))
 
+(defun proc-hist--wrap-process (proc &optional command spawn-command)
+  (let ((item (proc-hist--add-proc proc command spawn-command)))
+    (set-process-sentinel proc (proc-hist--create-sentinel item))
+    (set-process-filter proc (proc-hist--create-filter item))))
 
-(defun proc-hist--set-process-filter (oldfn proc fn)
-  (if-let ((item (proc-hist--find proc)))
-      (setf (proc-hist-item-proc-filter item) fn)
-    (funcall oldfn
-             proc
-             (if (proc-hist-advicep proc)
-                 (proc-hist--create-filter proc fn)
-               fn))))
-
-(defun proc-hist--set-process-sentinel (oldfn proc fn)
-  (if-let ((item (proc-hist--find proc)))
-      (setf (proc-hist-item-proc-sentinel item) fn)
-    (funcall oldfn
-             proc
-             (if (proc-hist-advicep proc)
-                 (proc-hist--create-sentinel proc fn)
-               fn))))
-
-(defun proc-hist--create-make-process (oldfn &rest args)
-  (let ((proc (apply oldfn args)))
-    (when-let ((sentinel (process-sentinel proc)))
-      (set-process-sentinel proc sentinel))
-    (when-let ((filter (process-filter proc)))
-      (set-process-filter proc filter))
-    proc))
+(defun proc-hist--create-advice-wrap-process (command-symbol)
+  (lambda (oldfn &rest args)
+    (let* ((args-to-command (thread-first
+                              command-symbol
+                              (alist-get proc-hist-commands)
+                              (plist-get :args-to-command)))
+           (command (and args-to-command (funcall args-to-command args)))
+           (processes (process-list)))
+      (apply oldfn args)
+      (when-let ((new-proc (seq-find
+                            (lambda (proc)
+                              (not (memq proc processes)))
+                            (process-list))))
+        (proc-hist--wrap-process new-proc command command-symbol)))))
 
 ;;; Kill/Fake
 (defun proc-hist--create-process-status (proc)
@@ -173,6 +168,20 @@
         20
       (funcall oldfn process))))
 
+(defun proc-hist--create-set-process-sentinel (item)
+  (lambda (oldfn process sentinel)
+    (if (equal (proc-hist-item-proc item) process)
+        (setf (proc-hist-item-proc-sentinel item)
+              sentinel)
+      (funcall oldfn process sentinel))))
+
+(defun proc-hist--create-set-process-filter (item)
+  (lambda (oldfn process filter)
+    (if (equal (proc-hist-item-proc item) process)
+        (setf (proc-hist-item-proc-filter item)
+              filter)
+      (funcall oldfn process filter))))
+
 (defun proc-hist-fake-kill (item)
   (interactive
    (list
@@ -186,7 +195,7 @@
                   `((name . proc-hist-fake-kill)))
     (unwind-protect
         (when-let ((fn (proc-hist-item-proc-sentinel item)))
-          (funcall f
+          (funcall fn
                    (proc-hist-item-proc item)
                    "Paused.\n"))
       (advice-remove 'process-status 'proc-hist-fake-kill)
@@ -196,7 +205,7 @@
       (setf (proc-hist-item-proc-sentinel item) nil)
       (setf (proc-hist-item-proc-filter item) nil))))
 
-(defun proc-hist--create-attatch-make-process (item)
+(defun proc-hist--create-attach-make-process (item)
   (lambda (oldfn &rest args)
     (if (proc-hist-item-proc item)
         (progn
@@ -214,49 +223,9 @@
                                                (proc-hist-item-status item))))
                                  args))))))
 
-(defun proc-hist-attach (item)
-  (interactive
-   (list
-    (funcall #'proc-hist-completing-read)))
-  (advice-add 'make-process :around
-              (proc-hist--create-attatch-make-process item)
-              `((name . proc-hist--create-attatch-make-process)))
-  (unwind-protect
-      (when-let ((args (thread-first
-                         (proc-hist-item-this-command item)
-                         (alist-get proc-hist-commands)
-                         (plist-get :item-to-args)
-                         (funcall item))))
-        (apply (proc-hist-item-this-command item) args)
-        (when-let ((filter (proc-hist-item-proc-filter item)))
-          (funcall filter
-                   (proc-hist-item-proc item)
-                   (with-temp-buffer
-                     (insert-file-contents (proc-hist-item-log item))
-                     (buffer-string)))))
-    (advice-remove 'make-process 'proc-hist--create-attatch-make-process)))
-
 ;; Util
 (defun proc-hist--command-to-list (item)
   (list (proc-hist-item-command item)))
-
-(defun proc-hist--advice-name (command)
-  (make-symbol
-   (format "%s-proc-hist-advice" command)))
-
-(defun proc-hist-eshell-send-input (&rest args)
-  (interactive "P")
-  (apply 'eshell-send-input args))
-
-(defun proc-hist-eshell-input (&rest _)
-  (buffer-substring-no-properties
-   eshell-last-input-start
-   (1- eshell-last-input-end)))
-
-(defun proc-hist-eshell-insert (item)
-  (goto-char (point-max))
-  (kill-line)
-  (insert (proc-hist-item-command item)))
 
 ;;; Completion
 (defconst proc-hist--max-cand-width 40)
@@ -367,11 +336,11 @@
              (eq (proc-hist-item-proc item) (get-buffer-process buffer))
              (buffer-live-p buffer))
         (switch-to-buffer buffer)
-      (cond proc-hist-open-dead-as
-            ('log (find-file (proc-hist-item-log item)))
-            ('fake (proc-hist-attach item))
-            (_ (user-error
-                "Expect `proc-hist-open-dead-as' to be ether `log' or `fake'"))))))
+      (pcase proc-hist-open-dead-as
+        ('log (find-file (proc-hist-item-log item)))
+        ('fake (proc-hist-attach item))
+        (_ (user-error
+            "Expect `proc-hist-open-dead-as' to be either `log' or `fake'"))))))
 
 (defun proc-hist-rerun (item)
   (interactive
@@ -405,49 +374,56 @@
   (when-let ((proc (proc-hist-item-proc item)))
     (kill-process proc)))
 
-;;; Setup
-(defun proc-hist--create-advice (command args-to-command)
-  (lambda (oldfn &rest args)
-    ;; Set vars
-    (setq proc-hist--this-command command)
-    (setq proc-hist--command (funcall args-to-command args))
-    ;; Set advice
-    (advice-add 'set-process-sentinel :around #'proc-hist--set-process-sentinel)
-    (advice-add 'set-process-filter :around #'proc-hist--set-process-filter)
-    (advice-add 'make-process :around #'proc-hist--create-make-process)
-    ;; Protect advice removal
-    (unwind-protect
-        (apply oldfn args)
-      (advice-remove 'set-process-sentinel #'proc-hist--set-process-sentinel)
-      (advice-remove 'set-process-filter #'proc-hist--set-process-filter)
-      (advice-remove 'make-process #'proc-hist--create-make-process))))
+(defun proc-hist-attach (item)
+  (interactive
+   (list
+    (funcall #'proc-hist-completing-read)))
+  (advice-add 'make-process :around
+              (proc-hist--create-attach-make-process item)
+              `((name . proc-hist-attach)))
+  (advice-add 'set-process-sentinel :around
+              (proc-hist--create-set-process-sentinel item)
+              `((name . proc-hist-attach)))
+  (advice-add 'set-process-filter :around
+              (proc-hist--create-set-process-filter item)
+              `((name . proc-hist-attach)))
+  (unwind-protect
+      (when-let ((args (thread-first
+                         (proc-hist-item-this-command item)
+                         (alist-get proc-hist-commands)
+                         (plist-get :item-to-args)
+                         (funcall item))))
+        (apply (proc-hist-item-this-command item) args)
+        (when-let ((filter (proc-hist-item-proc-filter item)))
+          (funcall filter
+                   (proc-hist-item-proc item)
+                   (with-temp-buffer
+                     (insert-file-contents (proc-hist-item-log item))
+                     (buffer-string)))))
+    (advice-remove 'make-process 'proc-hist-attach)
+    (advice-remove 'set-process-sentinel 'proc-hist-attach)
+    (advice-remove 'set-process-filter 'proc-hist-attach)))
 
+;;; Setup
 (defvar proc-hist--adviced nil)
 
 (defun proc-hist--advice-commands ()
   (seq-do
    (lambda (command-def)
-     (pcase-let* ((`(,command
-                     :args-to-command ,args-to-command
-                     :item-to-args ,item-to-args) command-def)
-                  (advice-name (proc-hist--advice-name command)))
-       ;; Rudimentary sanity check
-       (unless (and (functionp args-to-command)
-                    (functionp item-to-args))
-         (user-error "Invalid `proc-hist-commands' command definition `%s'"
-                     command-def))
-       (add-function :around (symbol-function command)
-                     (proc-hist--create-advice command args-to-command)
-                     `((name . ,advice-name)))
+     (let ((command (car command-def)))
+       (advice-add command
+                   :around
+                   (proc-hist--create-advice-wrap-process command)
+                   '((name . proc-hist-advice))
+                   )
        ;; Store advice commands for removal on -1
-       (push (cons command advice-name) proc-hist--adviced)))
+       (push command proc-hist--adviced)))
    proc-hist-commands))
 
 (defun proc-hist--advice-remove ()
   (seq-do
-   (lambda (advice)
-     (pcase-let ((`(,command . ,advice-name) advice))
-       (remove-function (symbol-function command) advice-name)))
+   (lambda (command)
+     (advice-remove command 'proc-hist-advice))
    proc-hist--adviced)
   (setq proc-hist--adviced nil))
 
@@ -460,3 +436,5 @@
       (proc-hist--advice-commands)
     ;; remove hooks
     (proc-hist--advice-remove)))
+
+(provide 'proc-hist)
