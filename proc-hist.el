@@ -1,7 +1,7 @@
 ;;; proc-hist.el --- History managment for processes -*- lexical-binding: t -*-
 
 (require 'subr-x)
-(require 'vc)
+(require 'vc-git)
 
 (defgroup proc-hist nil
   "TODO"
@@ -99,7 +99,9 @@
                  :vc (if (file-remote-p default-directory)
                          ""
                        ;; BUG: for some reason this hangs on remote files
-                       (or (vc-working-revision default-directory 'Git)
+                       (or (seq-take
+                            (vc-git-working-revision default-directory)
+                            7)
                            ""))
                  :this-command (or spawn-command null))))
       (push item proc-hist--items)
