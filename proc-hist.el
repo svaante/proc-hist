@@ -20,17 +20,13 @@
   "TODO"
   :group 'proc-hist)
 
-(defcustom proc-hist-open-dead-as 'log
+(defcustom proc-hist-open-dead-as 'fake
   "TODO"
   :type '(choice (const :tag "TODO" 'log)
                  (const :tag "TODO" 'fake))
   :group 'proc-hist)
 
 (cl-defstruct (proc-hist-item (:type list))
-  proc
-  proc-sentinel
-  proc-filter
-  last-buffer
   command
   status
   start-time
@@ -38,7 +34,11 @@
   log
   directory
   vc
-  this-command)
+  this-command
+  last-buffer
+  proc
+  proc-sentinel
+  proc-filter)
 
 (defvar proc-hist--items nil)
 
@@ -64,6 +64,17 @@
      (lambda (item)
        (equal proc (proc-hist-item-proc item)))
      proc-hist--items)))
+
+(defun proc-hist--update-status (item)
+  (when (and item
+             (proc-hist-item-proc item)
+             (memq (process-status (proc-hist-item-proc item)) '(exit signal)))
+    (setf (proc-hist-item-status item)
+          (process-exit-status (proc-hist-item-proc item)))
+    (setf (proc-hist-item-end-time item)
+          (proc-hist--time-format))
+    (setf (proc-hist-item-proc item)
+          nil)))
 
 (defun proc-hist--process-command (proc)
   (when-let ((proc)
@@ -114,17 +125,10 @@
   (setf (proc-hist-item-proc-sentinel item)
         (process-sentinel (proc-hist-item-proc item)))
   (lambda (proc signal)
-      (when (and (memq (process-status proc) '(exit signal))
-                 item)
-        (setf (proc-hist-item-status item)
-              (process-exit-status proc))
-        (setf (proc-hist-item-end-time item)
-              (proc-hist--time-format))
-        (setf (proc-hist-item-proc item)
-              nil))
-      (proc-hist--add-last-buffer item)
-      (when (proc-hist-item-proc-sentinel item)
-        (funcall (proc-hist-item-proc-sentinel item) proc signal))))
+    (proc-hist--update-status item)
+    (proc-hist--add-last-buffer item)
+    (when (proc-hist-item-proc-sentinel item)
+      (funcall (proc-hist-item-proc-sentinel item) proc signal))))
 
 (defun proc-hist--create-filter (item)
   (setf (proc-hist-item-proc-filter item)
@@ -185,7 +189,8 @@
 (defun proc-hist-fake-kill (item)
   (interactive
    (list
-    (funcall #'proc-hist-completing-read)))
+    (funcall #'proc-hist-completing-read
+             (lambda (item) (null (proc-hist-item-status item))))))
   (when-let ((proc (proc-hist-item-proc item)))
     (advice-add 'process-status :around
                   (proc-hist--create-process-status proc)
@@ -205,7 +210,7 @@
       (setf (proc-hist-item-proc-sentinel item) nil)
       (setf (proc-hist-item-proc-filter item) nil))))
 
-(defun proc-hist--create-attach-make-process (item)
+(defun proc-hist--create-make-process (item)
   (lambda (oldfn &rest args)
     (if (proc-hist-item-proc item)
         (progn
@@ -224,6 +229,10 @@
                                  args))))))
 
 ;; Util
+(defun proc-hist--items-fix ()
+  (seq-do #'proc-hist--update-status
+          proc-hist--items))
+
 (defun proc-hist--command-to-list (item)
   (list (proc-hist-item-command item)))
 
@@ -272,14 +281,26 @@
                (proc-hist--truncate
                 (proc-hist-item-start-time item)
                 20)
-                'face 'org-date)
+                'face 'bui-time)
+              "  "
+              (propertize
+               (if-let* ((command (proc-hist-item-this-command item))
+                         (command-string (symbol-name command)))
+                   command-string
+                 "")
+                'face 'italic)
               "  "
               (propertize
                 (proc-hist-item-vc item)
-                'face 'org-date)))))
+                'face 'magit-hash)))))
 
-(defun proc-hist--candidates ()
-  (let ((table (make-hash-table :test #'equal)))
+(defun proc-hist--candidates (&optional filter)
+  ;; Fix items that have
+  (proc-hist--items-fix)
+  (let ((table (make-hash-table :test #'equal))
+        (items (if filter
+                   (seq-filter filter proc-hist--items)
+                   proc-hist--items)))
     (seq-do
      (lambda (item)
        (let* ((dup-format " <%d>")
@@ -297,11 +318,11 @@
                                          'face 'shadow))
                  n (1+ n)))
          (puthash key item table)))
-      proc-hist--items)
+      items)
     table))
 
-(defun proc-hist-completing-read ()
-  (let* ((table (proc-hist--candidates))
+(defun proc-hist-completing-read (&optional filter)
+  (let* ((table (proc-hist--candidates filter))
          (collection
           (lambda (string predicate action)
             (if (eq action 'metadata)
@@ -358,7 +379,7 @@
   (interactive
    (list
     (funcall #'proc-hist-completing-read)
-    (funcall #'proc-hist-completing-read-command)))
+    (funcall #'proc-hist-completing-read)))
   (let ((default-directory (proc-hist-item-directory item)))
     (apply command
            (thread-first
@@ -370,7 +391,8 @@
 (defun proc-hist-kill (item)
   (interactive
    (list
-    (funcall #'proc-hist-completing-read)))
+    (funcall #'proc-hist-completing-read
+             (lambda (item) (null (proc-hist-item-status item))))))
   (when-let ((proc (proc-hist-item-proc item)))
     (kill-process proc)))
 
@@ -378,8 +400,9 @@
   (interactive
    (list
     (funcall #'proc-hist-completing-read)))
+  ;; Ugly advising
   (advice-add 'make-process :around
-              (proc-hist--create-attach-make-process item)
+              (proc-hist--create-make-process item)
               `((name . proc-hist-attach)))
   (advice-add 'set-process-sentinel :around
               (proc-hist--create-set-process-sentinel item)
@@ -414,8 +437,7 @@
        (advice-add command
                    :around
                    (proc-hist--create-advice-wrap-process command)
-                   '((name . proc-hist-advice))
-                   )
+                   '((name . proc-hist-advice)))
        ;; Store advice commands for removal on -1
        (push command proc-hist--adviced)))
    proc-hist-commands))
