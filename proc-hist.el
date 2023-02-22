@@ -148,17 +148,15 @@
 
 (defun proc-hist--create-advice-wrap-process (command-symbol)
   (lambda (oldfn &rest args)
-    (let* ((args-to-command (thread-first
-                              command-symbol
-                              (alist-get proc-hist-commands)
-                              (plist-get :args-to-command)))
+    (let* ((args-to-command (thread-first command-symbol
+                                          (alist-get proc-hist-commands)
+                                          (plist-get :args-to-command)))
            (command (and args-to-command (funcall args-to-command args)))
            (processes (process-list)))
       (apply oldfn args)
-      (when-let ((new-proc (seq-find
-                            (lambda (proc)
-                              (not (memq proc processes)))
-                            (process-list))))
+      (when-let ((new-proc (seq-find (lambda (proc)
+                                       (not (memq proc processes)))
+                                     (process-list))))
         (proc-hist--wrap-process new-proc command command-symbol)))))
 
 ;;; Kill/Fake
@@ -239,67 +237,71 @@
   (list (proc-hist-item-command item)))
 
 ;;; Completion
-(defconst proc-hist--max-cand-width 40)
+(defconst proc-hist--max-cand-width 50)
 
 (defun proc-hist--truncate (string length)
   (truncate-string-to-width string length 0 ?\s "..."))
 
 (defun proc-hist-annotate (table)
   (lambda (candidate)
-    (let* ((item (gethash candidate table))
-           (space-width (- proc-hist--max-cand-width
-                           (string-width candidate))))
-      (concat (propertize " " 'display `(space ,:width ,space-width))
-              (propertize
-               (proc-hist--truncate
-                (abbreviate-file-name
-                 (proc-hist-item-directory item))
-                40)
-               'face 'dired-directory)
-              "  "
-               (propertize
-               (proc-hist--truncate
-                 (format-seconds
-                  "%yy %dd %hh %mm %ss%z"
-                  (- (if (not (proc-hist-item-end-time item))
-                         (time-to-seconds)
-                       (thread-first (proc-hist-item-end-time item)
-                                     (parse-time-string)
-                                     (encode-time)
-                                     (float-time)))
-                     (thread-first (proc-hist-item-start-time item)
-                                   (parse-time-string)
-                                   (encode-time)
-                                   (float-time))
-                     -0.000001))
-                 10)
-                'face
-                (cond
-                 ((not (proc-hist-item-end-time item)) 'default)
-                 ((zerop (proc-hist-item-status item)) 'success)
-                 (t 'error)))
-              "  "
-              (propertize
-               (proc-hist--truncate
-                (proc-hist-item-start-time item)
-                20)
-                'face 'bui-time)
-              "  "
-              (propertize
-               (if-let* ((command (proc-hist-item-this-command item))
-                         (command-string (symbol-name command)))
-                   command-string
-                 "")
-                'face 'italic)
-              "  "
-              (propertize
-                (proc-hist-item-vc item)
-                'face 'magit-hash)))))
+    (when-let* ((item (gethash candidate table))
+                (space-width (- proc-hist--max-cand-width
+                                (string-width candidate))))
+      (concat
+       (propertize " " 'display
+                   `(space :align-to (+ left proc-hist--max-cand-width)))
+       (propertize
+        (proc-hist--truncate
+         (abbreviate-file-name
+          (proc-hist-item-directory item))
+         40)
+        'face 'dired-directory)
+       "  "
+       (propertize
+        (proc-hist--truncate
+         (format-seconds
+          "%yy %dd %hh %mm %ss%z"
+          (- (if (not (proc-hist-item-end-time item))
+                 (time-to-seconds)
+               (thread-first (proc-hist-item-end-time item)
+                             (parse-time-string)
+                             (encode-time)
+                             (float-time)))
+             (thread-first (proc-hist-item-start-time item)
+                           (parse-time-string)
+                           (encode-time)
+                           (float-time))
+             -0.1))
+         10)
+        'face
+        (cond
+         ((not (proc-hist-item-end-time item)) 'default)
+         ((zerop (proc-hist-item-status item)) 'success)
+         (t 'error)))
+       "  "
+       (propertize
+        (proc-hist--truncate
+         (proc-hist-item-start-time item)
+         20)
+        'face 'bui-time)
+       "  "
+       (propertize
+        (proc-hist--truncate
+         (if-let* ((command (proc-hist-item-this-command item))
+                   (command-string (symbol-name command)))
+             command-string
+           "")
+         20)
+        'face 'italic)
+        "  "
+       (propertize
+        (proc-hist-item-vc item)
+        'face 'magit-hash)))))
 
 (defun proc-hist--candidates (&optional filter)
   ;; Fix items that have
   (proc-hist--items-fix)
-  (let ((table (make-hash-table :test #'equal))
+  (let ((table (make-hash-table :test 'equal))
         (items (if filter
                    (seq-filter filter proc-hist--items)
                    proc-hist--items)))
