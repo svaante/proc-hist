@@ -2,6 +2,7 @@
 
 (require 'subr-x)
 (require 'vc-git)
+(require 'cl-lib)
 
 (defgroup proc-hist nil
   "TODO"
@@ -24,6 +25,10 @@
   "TODO"
   :type '(choice (const :tag "TODO" 'log)
                  (const :tag "TODO" 'fake))
+  :group 'proc-hist)
+
+(defcustom proc-hist-completing-read #'proc-hist-completing-read-fn
+  "TODO"
   :group 'proc-hist)
 
 (cl-defstruct (proc-hist-item (:type list))
@@ -172,44 +177,6 @@
         20
       (funcall oldfn process))))
 
-(defun proc-hist--create-set-process-sentinel (item)
-  (lambda (oldfn process sentinel)
-    (if (equal (proc-hist-item-proc item) process)
-        (setf (proc-hist-item-proc-sentinel item)
-              sentinel)
-      (funcall oldfn process sentinel))))
-
-(defun proc-hist--create-set-process-filter (item)
-  (lambda (oldfn process filter)
-    (if (equal (proc-hist-item-proc item) process)
-        (setf (proc-hist-item-proc-filter item)
-              filter)
-      (funcall oldfn process filter))))
-
-(defun proc-hist-fake-kill (item)
-  (interactive
-   (list
-    (funcall #'proc-hist-completing-read
-             (lambda (item) (null (proc-hist-item-status item))))))
-  (when-let ((proc (proc-hist-item-proc item)))
-    (advice-add 'process-status :around
-                  (proc-hist--create-process-status proc)
-                  `((name . proc-hist-fake-kill)))
-    (advice-add 'process-exit-status :around
-                  (proc-hist--create-process-exit-status proc)
-                  `((name . proc-hist-fake-kill)))
-    (unwind-protect
-        (when-let ((fn (proc-hist-item-proc-sentinel item)))
-          (funcall fn
-                   (proc-hist-item-proc item)
-                   "Paused.\n"))
-      (advice-remove 'process-status 'proc-hist-fake-kill)
-      (advice-remove 'process-exit-status 'proc-hist-fake-kill)
-      (when-let ((proc (proc-hist-item-proc item)))
-        (set-process-buffer proc nil))
-      (setf (proc-hist-item-proc-sentinel item) nil)
-      (setf (proc-hist-item-proc-filter item) nil))))
-
 (defun proc-hist--create-make-process (item)
   (lambda (oldfn &rest args)
     (if (proc-hist-item-proc item)
@@ -322,10 +289,10 @@
                                          'face 'shadow))
                  n (1+ n)))
          (puthash key item table)))
-      items)
+      (reverse items))
     table))
 
-(defun proc-hist-completing-read (&optional filter)
+(defun proc-hist-completing-read-fn (prompt &optional filter)
   (let* ((table (proc-hist--candidates filter))
          (collection
           (lambda (string predicate action)
@@ -337,7 +304,7 @@
                                     table
                                     string
                                     predicate)))))
-    (gethash (completing-read "Command: " collection nil t) table)))
+    (gethash (completing-read prompt collection nil t) table)))
 
 (defun proc-hist-completing-read-command ()
   (let ((collection
@@ -355,7 +322,7 @@
 (defun proc-hist-dwim (item)
   (interactive
    (list
-    (funcall #'proc-hist-completing-read)))
+    (funcall proc-hist-completing-read "Open: ")))
   (let ((buffer (proc-hist-item-last-buffer item)))
     (if (and buffer
              (eq (proc-hist-item-proc item) (get-buffer-process buffer))
@@ -370,7 +337,7 @@
 (defun proc-hist-rerun (item)
   (interactive
    (list
-    (funcall #'proc-hist-completing-read)))
+    (funcall proc-hist-completing-read "Rerun: ")))
   (let ((default-directory (proc-hist-item-directory item)))
     (apply (proc-hist-item-this-command item)
            (thread-first
@@ -382,8 +349,8 @@
 (defun proc-hist-rerun-as (item command)
   (interactive
    (list
-    (funcall #'proc-hist-completing-read)
-    (funcall #'proc-hist-completing-read)))
+    (funcall proc-hist-completing-read "Rerun: ")
+    (funcall #'proc-hist-completing-read-command)))
   (let ((default-directory (proc-hist-item-directory item)))
     (apply command
            (thread-first
@@ -395,24 +362,47 @@
 (defun proc-hist-kill (item)
   (interactive
    (list
-    (funcall #'proc-hist-completing-read
+    (funcall proc-hist-completing-read
+             "Kill: "
              (lambda (item) (null (proc-hist-item-status item))))))
   (when-let ((proc (proc-hist-item-proc item)))
     (kill-process proc)))
 
+(defun proc-hist-fake-kill (item)
+  (interactive
+   (list
+    (funcall proc-hist-completing-read
+             (lambda (item) (null (proc-hist-item-status item))))))
+  (when-let ((proc (proc-hist-item-proc item)))
+    (advice-add 'process-status :around
+                  (proc-hist--create-process-status proc)
+                  `((name . proc-hist-fake-kill)))
+    (advice-add 'process-exit-status :around
+                  (proc-hist--create-process-exit-status proc)
+                  `((name . proc-hist-fake-kill)))
+    (unwind-protect
+        (when-let ((fn (proc-hist-item-proc-sentinel item)))
+          (funcall fn
+                   (proc-hist-item-proc item)
+                   "Paused.\n"))
+      (advice-remove 'process-status 'proc-hist-fake-kill)
+      (advice-remove 'process-exit-status 'proc-hist-fake-kill)
+      (when-let ((proc (proc-hist-item-proc item)))
+        (set-process-buffer proc nil)))))
+
 (defun proc-hist-attach (item)
   (interactive
    (list
-    (funcall #'proc-hist-completing-read)))
+    (funcall proc-hist-completing-read "Attach: ")))
   ;; Ugly advising
   (advice-add 'make-process :around
               (proc-hist--create-make-process item)
               `((name . proc-hist-attach)))
   (advice-add 'set-process-sentinel :around
-              (proc-hist--create-set-process-sentinel item)
+              #'ignore
               `((name . proc-hist-attach)))
   (advice-add 'set-process-filter :around
-              (proc-hist--create-set-process-filter item)
+              #'ignore
               `((name . proc-hist-attach)))
   (unwind-protect
       (when-let ((args (thread-first
@@ -458,8 +448,14 @@
   "TODO"
   :global t :group 'proc-hist
   (if proc-hist-mode
-      ;; add hooks
-      (proc-hist--advice-commands)
+      (progn
+        (when (memq 'consult features)
+          (require 'proc-hist-consult)
+          (setq proc-hist-completing-read 'proc-hist-consult-completing-read))
+        (when (memq 'embark features)
+          (require 'proc-hist-embark))
+        ;; add hooks
+        (proc-hist--advice-commands))
     ;; remove hooks
     (proc-hist--advice-remove)))
 
