@@ -366,7 +366,7 @@
              "Kill: "
              (lambda (item) (null (proc-hist-item-status item))))))
   (when-let ((proc (proc-hist-item-proc item)))
-    (kill-process proc)))
+    (signal-process proc 'kill)))
 
 (defun proc-hist-fake-kill (item)
   (interactive
