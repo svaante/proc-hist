@@ -53,7 +53,7 @@
     :category proc-hist
     :default  nil
     :hidden   t
-    :enabled  ,(lambda () (funcall consult-project-function nil))
+    :enabled  nil
     :annotate proc-hist--consult-annotate
     :items
     ,(lambda ()
