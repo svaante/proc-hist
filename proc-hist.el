@@ -14,6 +14,8 @@
      :command proc-hist--shell-command-to-string)
     ("Shell"
      :rerun proc-hist--compile-rerun
+     :command proc-hist--shell-command-to-string)
+    (eshell-mode
      :command proc-hist--shell-command-to-string))
   "TODO")
 
@@ -121,11 +123,7 @@
     (apply tramp-handle-make-process args)))
 
 (defun proc-hist--advice-make-process (make-process &rest args)
-  (if-let* ((name (plist-get args :name))
-            (proc-hist-command (seq-find
-                                (lambda (command)
-                                  (string-match-p (car command) name))
-                                proc-hist-commands)))
+  (if-let* ((proc-hist-command (proc-hist--proc-hist-command args)))
       (let* ((filter (plist-get args :filter))
              (sentinel (plist-get args :sentinel))
              (args (thread-first args
@@ -166,6 +164,21 @@
     (compile (proc-hist-item-command item))))
 
 ;;; Util
+(defun proc-hist--proc-hist-command (args)
+  (seq-find
+   (lambda (proc-hist-command)
+     (let ((id (car proc-hist-command)))
+       (cond
+        ((stringp id)
+         (string-match-p id
+                         (plist-get args :name)))
+        ((symbolp id)
+         (with-current-buffer (or (plist-get args :buffer)
+                                  (current-buffer))
+           (and (boundp id) id)))
+        (t nil))))
+   proc-hist-commands))
+
 (defun proc-hist--get-rerun (rerun-command)
   (thread-first rerun-command
                 (alist-get proc-hist-commands nil nil 'equal)
@@ -253,7 +266,8 @@
        "  "
        (propertize
         (proc-hist--truncate
-         (proc-hist-item-name item)
+         (format "%s"
+           (proc-hist-item-name item))
          20)
         'face 'italic)
         "  "

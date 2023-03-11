@@ -99,3 +99,12 @@
     (proc-hist-mode +1)
     (should (equal before-items
                    (proc-hist--items)))))
+
+(ert-deftest proc-hist-eshell-test ()
+  (clean-proc-hist-mode)
+  (eshell-command "echo eshell-command")
+  (let ((item (car (proc-hist--items))))
+    (poll-until (lambda () (proc-hist-item-status item)))
+    ;; Assert hist-item
+    (should (equal (length (proc-hist--items))
+                   1))))
