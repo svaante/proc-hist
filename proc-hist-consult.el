@@ -71,8 +71,8 @@
     :items
     ,(lambda ()
        (proc-hist--consult-items
-        (lambda (item) (equal 'compile
-                              (proc-hist-item-this-command item))))))
+        (lambda (item) (equal "compilation"
+                              (proc-hist-item-name item))))))
   "TODO")
 
 (defvar proc-hist--shell-command
@@ -84,8 +84,8 @@
     :items
     ,(lambda ()
        (proc-hist--consult-items
-        (lambda (item) (equal 'async-shell-command
-                              (proc-hist-item-this-command item))))))
+        (lambda (item) (equal "Shell"
+                              (proc-hist-item-name item))))))
   "TODO")
 
 (defvar proc-hist--free
