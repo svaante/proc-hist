@@ -42,8 +42,14 @@
   proc-sentinel
   proc-filter)
 
-(defvar proc-hist--items (make-hash-table))
+(defvar proc-hist--items-active (make-hash-table))
+(defvar proc-hist--items-inactive nil)
 (defvar proc-hist--buffers (make-hash-table))
+
+(defun proc-hist--items ()
+  (append
+   (hash-table-values proc-hist--items-active)
+   proc-hist--items-inactive))
 
 (defun proc-hist--time-format ()
   (format-time-string "%Y-%m-%d %T"))
@@ -70,8 +76,8 @@
     (setf (proc-hist-item-end-time item)
           (proc-hist--time-format))
     (setf (proc-hist-item-proc item)
-          nil))
-  (proc-hist--save))
+          nil)
+    (proc-hist--save)))
 
 (defun proc-hist--add-proc (proc name command directory filter sentinel)
   (let ((item (make-proc-hist-item
@@ -81,29 +87,26 @@
                :end-time nil
                :log (proc-hist--log proc)
                :directory directory
-               :vc (if (file-remote-p default-directory)
-                       ""
-                     ;; BUG: for some reason this hangs on remote files
-                     (or (seq-take
-                          (vc-git-working-revision default-directory)
-                          7)
-                         ""))
+               :vc (or (seq-take
+                        (vc-git-working-revision default-directory)
+                        7)
+                       "")
                :name name
                :proc proc
                :proc-filter filter
                :proc-sentinel sentinel)))
-    (puthash proc item proc-hist--items)
+    (puthash proc item proc-hist--items-active)
     item))
 
 (defun proc-hist--sentinel (proc signal)
-  (when-let ((item (gethash proc proc-hist--items)))
+  (when-let ((item (gethash proc proc-hist--items-active)))
     (puthash (process-buffer proc) item proc-hist--buffers)
     (proc-hist--update-status proc item)
     (when (proc-hist-item-proc-sentinel item)
       (funcall (proc-hist-item-proc-sentinel item) proc signal))))
 
 (defun proc-hist--filter (proc string)
-  (when-let ((item (gethash proc proc-hist--items)))
+  (when-let ((item (gethash proc proc-hist--items-active)))
     (puthash (process-buffer proc) item proc-hist--buffers)
     (write-region string nil (proc-hist-item-log item) 'append 'no-echo)
     (when (proc-hist-item-proc-filter item)
@@ -144,15 +147,16 @@
         proc)
    (apply make-process args)))
 
+
 (defun proc-hist--advice-set-process-sentinel (set-process-sentinel process sentinel)
-  (if-let* ((item (gethash process proc-hist--items)))
+  (if-let* ((item (gethash process proc-hist--items-active)))
       ;; Set proc hist item sentinel
       (when (setf (proc-hist-item-proc-sentinel item) sentinel)
         (funcall set-process-sentinel process #'proc-hist--sentinel))
     (funcall set-process-sentinel process sentinel)))
 
 (defun proc-hist--advice-set-process-filter (set-process-filter process filter)
-  (if-let ((item (gethash process proc-hist--items)))
+  (if-let ((item (gethash process proc-hist--items-active)))
       (when (setf (proc-hist-item-proc-filter item) filter)
         (funcall set-process-filter process #'proc-hist--filter))
     (funcall set-process-filter process filter)))
@@ -186,8 +190,8 @@
     (let ((print-length nil)
 	  (print-level nil)
 	  (print-quoted t))
-      (prin1 `(setq proc-hist--items
-		    ',proc-hist--items)
+      (prin1 `(setq proc-hist--items-inactive
+		    ',(proc-hist--items))
 	     (current-buffer)))
     ;; Write to `proc-hist-save-file'
     (let ((file-precious-flag t)
@@ -260,7 +264,7 @@
 (defun proc-hist--candidates (&optional filter)
   (let ((table (make-hash-table :test 'equal))
         (items (seq-filter (or filter 'identity)
-                           (hash-table-values proc-hist--items))))
+                           (proc-hist--items))))
     (seq-do
      (lambda (item)
        (let* ((dup-format " <%d>")

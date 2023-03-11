@@ -4,23 +4,34 @@
 (setq ert-batch-print-level 10)
 (setq ert-batch-print-length 15)
 
+(defun clean-proc-hist-mode ()
+  (proc-hist-mode -1)
+  (setq proc-hist-save-file "/dev/null")
+  (setq proc-hist--items-active (make-hash-table))
+  (setq proc-hist--items-inactive nil)
+  (setq proc-hist--buffers (make-hash-table))
+  (proc-hist-mode 1))
+
+(defun poll-until (fn)
+  (while (not (funcall fn))
+    (sleep-for 0 1)))
+
 (ert-deftest proc-hist-compile-test ()
   ;; Setup
-  (setq proc-hist--items nil)
-  (proc-hist-mode +1)
+  (clean-proc-hist-mode)
   ;; Run compile
   (compile "echo proc-hist-compile-test")
-  (sleep-for 1) ;; Wait for process-filter call
-  (should (equal (length proc-hist--items) 1))
-  (let ((item (car proc-hist--items)))
+  (let ((item (car (proc-hist--items))))
+    (poll-until (lambda () (proc-hist-item-status item)))
+    ;; Assert hist-item
+    (should (equal (length (proc-hist--items))
+                   1))
     (should (equal (proc-hist-item-command item)
-               "echo proc-hist-compile-test"))
-    (should (and
-             (get-buffer "*compilation*")
-             (equal (proc-hist-item-last-buffer item)
-                (get-buffer "*compilation*"))))
-    (should (equal (proc-hist-item-status item) 0))
-    (should (file-exists-p (proc-hist-item-log item)))
+                   "echo proc-hist-compile-test"))
+    (should (equal (proc-hist-item-status item)
+                   0))
+    (should (stringp (proc-hist-item-start-time item)))
+    (should (stringp (proc-hist-item-end-time item)))
     (should (equal (with-temp-buffer
                      (insert-file-contents (proc-hist-item-log item))
                      (buffer-string))
@@ -28,44 +39,63 @@
     (should (equal (proc-hist-item-directory item)
                    default-directory))
     (should (stringp (proc-hist-item-vc item)))
-    (should (equal (proc-hist-item-this-command item)
-                   'compile)))
+    (should (equal (proc-hist-item-name item)
+                   "compilation"))
+    ;; Get buffer
+    (should (equal (gethash (get-buffer "*compilation*") proc-hist--buffers)
+                   item)))
   ;; Teardown
-  (proc-hist-mode -1)
   (kill-buffer (get-buffer "*compilation*")))
 
-(ert-deftest proc-hist-compile-long-running-test ()
+(ert-deftest proc-hist-async-shell-command-test ()
   ;; Setup
-  (setq proc-hist--items nil)
-  (proc-hist-mode +1)
+  (clean-proc-hist-mode)
   ;; Run compile
-  (compile "echo start && sleep 2 && echo proc-hist-compile-log-running-test")
-  (sleep-for 1) ;; Wait for process-filter call
-  (should (equal (length proc-hist--items) 1))
-  (let ((item (car proc-hist--items)))
-    (should (file-exists-p (proc-hist-item-log item)))
+  (async-shell-command "echo async-shell-command")
+  (let ((item (car (proc-hist--items))))
+    (poll-until (lambda () (proc-hist-item-status item)))
+    ;; Assert hist-item
+    (should (equal (length (proc-hist--items))
+                   1))
+    (should (equal (proc-hist-item-command item)
+                   "echo async-shell-command"))
+    (should (equal (proc-hist-item-status item)
+                   0))
+    (should (stringp (proc-hist-item-start-time item)))
+    (should (stringp (proc-hist-item-end-time item)))
     (should (equal (with-temp-buffer
                      (insert-file-contents (proc-hist-item-log item))
                      (buffer-string))
-                   "start\n"))
-    (should (equal (proc-hist-item-command item)
-                   "echo start && sleep 2 && echo proc-hist-compile-log-running-test"))
-    (should (and
-             (get-buffer "*compilation*")
-             (equal (proc-hist-item-last-buffer item)
-                    (get-buffer "*compilation*"))))
-    (should (proc-hist-item-command item))
-    (should (null (proc-hist-item-status item)))
+                   "async-shell-command\n"))
     (should (equal (proc-hist-item-directory item)
                    default-directory))
     (should (stringp (proc-hist-item-vc item)))
-    (should (equal (proc-hist-item-this-command item)
-                   'compile))
-    ;; Wait for process to exit
-    (sleep-for 1)
-    (should (equal (with-temp-buffer
-                     (insert-file-contents (proc-hist-item-log item))
-                     (buffer-string))
-                   "start\nproc-hist-compile-log-running-test\n"))
-    (should (equal (proc-hist-item-status item) 0)))
-  (kill-buffer (get-buffer "*compilation*")))
+    (should (equal (proc-hist-item-name item)
+                   "Shell"))
+    ;; Get buffer
+    (should (equal (gethash (get-buffer "*Async Shell Command*") proc-hist--buffers)
+                   item)))
+  ;; Teardown
+  (kill-buffer (get-buffer "*Async Shell Command*")))
+
+(ert-deftest proc-hist-save-hist-test ()
+  (clean-proc-hist-mode)
+  (delete-file "/tmp/save-file")
+  (setq proc-hist-save-file "/tmp/save-file")
+  ;; Fill history with one command
+  (async-shell-command "echo async-shell-command")
+  (compile "echo async-shell-compile")
+  (poll-until (lambda ()
+                (seq-every-p
+                 (lambda (item)
+                   (proc-hist-item-status item))
+                 (proc-hist--items))))
+  (let ((before-items (proc-hist--items)))
+    ;; save-file should be saved on process finished
+    (setq proc-hist--items-active (make-hash-table))
+    (setq proc-hist--items-inactive nil)
+    (setq proc-hist--buffers (make-hash-table))
+    (proc-hist-mode -1)
+    (proc-hist-mode +1)
+    (should (equal before-items
+                   (proc-hist--items)))))
