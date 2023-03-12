@@ -29,6 +29,10 @@
   "TODO"
   :group 'proc-hist)
 
+(defcustom proc-hist-on-finished #'proc-hist-dwim
+  "TODO"
+  :group 'proc-hist)
+
 (cl-defstruct (proc-hist-item (:type list))
   command
   status
@@ -71,12 +75,15 @@
   (when (and item
              proc
              (memq (process-status proc) '(exit signal)))
+    ;; Process exited
     (setf (proc-hist-item-status item)
           (process-exit-status proc))
     (setf (proc-hist-item-end-time item)
           (proc-hist--time-format))
     (setf (proc-hist-item-proc item)
           nil)
+    ;; Call on finished
+    (funcall proc-hist-on-finished item)
     (proc-hist--save)))
 
 (defun proc-hist--add-proc (proc name command directory filter sentinel)
@@ -220,8 +227,14 @@
 ;;; Completion
 (defconst proc-hist--max-cand-width 60)
 
-(defun proc-hist--truncate (string length)
-  (truncate-string-to-width string length 0 ?\s "..."))
+(defun proc-hist--truncate (string length face)
+  (truncate-string-to-width
+   (propertize
+    (truncate-string-to-width string length 0 nil "...")
+    'face face)
+   length
+   0
+   ?\s))
 
 (defun proc-hist-annotate (table)
   (lambda (candidate)
@@ -231,47 +244,42 @@
       (concat
        (propertize " " 'display
                    `(space :align-to (+ left proc-hist--max-cand-width)))
-       (propertize
-        (proc-hist--truncate
-         (abbreviate-file-name
-          (proc-hist-item-directory item))
-         40)
-        'face 'dired-directory)
+       (proc-hist--truncate
+        (abbreviate-file-name
+         (proc-hist-item-directory item))
+         40
+        'dired-directory)
        "  "
-       (propertize
-        (proc-hist--truncate
-         (format-seconds
-          "%yy %dd %hh %mm %ss%z"
-          (- (if (not (proc-hist-item-end-time item))
-                 (time-to-seconds)
-               (thread-first (proc-hist-item-end-time item)
-                             (parse-time-string)
-                             (encode-time)
-                             (float-time)))
-             (thread-first (proc-hist-item-start-time item)
-                           (parse-time-string)
-                           (encode-time)
-                           (float-time))
-             -0.1))
-         10)
-        'face
+       (proc-hist--truncate
+        (format-seconds
+         "%yy %dd %hh %mm %ss%z"
+         (- (if (not (proc-hist-item-end-time item))
+                (time-to-seconds)
+              (thread-first (proc-hist-item-end-time item)
+                            (parse-time-string)
+                            (encode-time)
+                            (float-time)))
+            (thread-first (proc-hist-item-start-time item)
+                          (parse-time-string)
+                          (encode-time)
+                          (float-time))
+            -0.1))
+        10
         (cond
          ((not (proc-hist-item-end-time item)) 'default)
          ((zerop (proc-hist-item-status item)) 'success)
          (t 'error)))
        "  "
-       (propertize
-        (proc-hist--truncate
-         (proc-hist-item-start-time item)
-         20)
-        'face 'bui-time)
+       (proc-hist--truncate
+        (proc-hist-item-start-time item)
+        20
+        'bui-time)
        "  "
-       (propertize
-        (proc-hist--truncate
-         (format "%s"
-           (proc-hist-item-name item))
-         20)
-        'face 'italic)
+       (proc-hist--truncate
+        (format "%s"
+                (proc-hist-item-name item))
+        20
+        'italic)
         "  "
        (propertize
         (proc-hist-item-vc item)
@@ -289,7 +297,7 @@
                     base-key
                     (- proc-hist--max-cand-width
                        (string-width dup-format))
-                    0 nil "..."))
+                    0 nil ".."))
               (n 1))
          (while (gethash key table)
            (setq key (concat base-key
