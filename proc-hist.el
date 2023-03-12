@@ -88,7 +88,7 @@
                :log (proc-hist--log proc)
                :directory directory
                :vc (or (seq-take
-                        (vc-git-working-revision default-directory)
+                        (vc-git-working-revision directory)
                         7)
                        "")
                :name name
