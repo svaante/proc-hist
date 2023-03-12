@@ -337,7 +337,25 @@
                  (hash-table-keys proc-hist--buffers))))
     (if (and buffer (buffer-live-p buffer))
         (switch-to-buffer-other-window buffer)
-      (find-file (proc-hist-item-log item)))))
+      (proc-hist-open-log item))))
+
+(defun proc-hist-open-log (item)
+  (interactive
+   (list
+    (funcall proc-hist-completing-read "Open log: ")))
+  (when (file-exists-p (proc-hist-item-log item))
+    (let ((buffer (find-file-noselect
+                   (proc-hist-item-log item))))
+      (with-current-buffer buffer
+        (rename-buffer
+         (format "*%s %s*"
+                 (proc-hist-item-command item)
+                 (proc-hist-item-start-time item))
+         t)
+        (read-only-mode)
+        (compilation-minor-mode)
+        (setq-local default-directory (proc-hist-item-directory item)))
+      (switch-to-buffer-other-window buffer))))
 
 (defun proc-hist-rerun (item)
   (interactive
