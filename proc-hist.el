@@ -343,7 +343,8 @@
                    (equal item (gethash buffer proc-hist--buffers)))
                  (hash-table-keys proc-hist--buffers))))
     (if (and buffer (buffer-live-p buffer))
-        (switch-to-buffer-other-window buffer)
+        (unless (equal (current-buffer) buffer)
+          (switch-to-buffer-other-window buffer))
       (proc-hist-open-log item))))
 
 (defun proc-hist-open-log (item)
