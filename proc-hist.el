@@ -252,7 +252,7 @@
        "  "
        (proc-hist--truncate
         (format-seconds
-         "%yy %dd %hh %mm %ss%z"
+         "%x%yy %dd %hh %mm %ss%z"
          (- (if (not (proc-hist-item-end-time item))
                 (time-to-seconds)
               (thread-first (proc-hist-item-end-time item)
@@ -262,13 +262,12 @@
             (thread-first (proc-hist-item-start-time item)
                           (parse-time-string)
                           (encode-time)
-                          (float-time))
-            -0.1))
-        10
-        (cond
-         ((not (proc-hist-item-end-time item)) 'default)
-         ((zerop (proc-hist-item-status item)) 'success)
-         (t 'error)))
+                          (float-time))))
+         10
+         (cond
+          ((not (proc-hist-item-end-time item)) 'default)
+          ((zerop (proc-hist-item-status item)) 'success)
+          (t 'error)))
        "  "
        (proc-hist--truncate
         (proc-hist-item-start-time item)
