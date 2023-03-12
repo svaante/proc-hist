@@ -13,7 +13,7 @@
      :rerun proc-hist--compile-rerun
      :command proc-hist--shell-command-to-string)
     ("Shell"
-     :rerun proc-hist--compile-rerun
+     :rerun proc-hist--async-shell-command-rerun
      :command proc-hist--shell-command-to-string))
   "TODO")
 
@@ -160,6 +160,10 @@
 (defun proc-hist--compile-rerun (item)
   (let ((default-directory (proc-hist-item-directory item)))
     (compile (proc-hist-item-command item))))
+
+(defun proc-hist--async-shell-command-rerun (item)
+  (let ((default-directory (proc-hist-item-directory item)))
+    (async-shell-command (proc-hist-item-command item))))
 
 ;;; Util
 (defun proc-hist--proc-hist-command (args)
