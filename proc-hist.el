@@ -188,8 +188,8 @@
 
 (defun proc-hist--shell-command-to-string (command)
   (mapconcat 'identity
-             (if (equal (list shell-file-name shell-command-switch)
-                        (seq-take command 2))
+             (if (equal shell-command-switch
+                        (nth 1 command))
                  (seq-drop command 2)
                command)
              " "))
