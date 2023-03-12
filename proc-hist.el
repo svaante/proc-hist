@@ -14,8 +14,6 @@
      :command proc-hist--shell-command-to-string)
     ("Shell"
      :rerun proc-hist--compile-rerun
-     :command proc-hist--shell-command-to-string)
-    (eshell-mode
      :command proc-hist--shell-command-to-string))
   "TODO")
 
