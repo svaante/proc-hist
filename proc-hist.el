@@ -109,17 +109,17 @@
 
 (defun proc-hist--sentinel (proc signal)
   (when-let ((item (gethash proc proc-hist--items-active)))
-    (puthash (process-buffer proc) item proc-hist--buffers)
-    (proc-hist--update-status proc item)
     (when (proc-hist-item-proc-sentinel item)
-      (funcall (proc-hist-item-proc-sentinel item) proc signal))))
+      (funcall (proc-hist-item-proc-sentinel item) proc signal))
+    (puthash (process-buffer proc) item proc-hist--buffers)
+    (proc-hist--update-status proc item)))
 
 (defun proc-hist--filter (proc string)
   (when-let ((item (gethash proc proc-hist--items-active)))
-    (puthash (process-buffer proc) item proc-hist--buffers)
-    (write-region string nil (proc-hist-item-log item) 'append 'no-echo)
     (when (proc-hist-item-proc-filter item)
-      (funcall (proc-hist-item-proc-filter item) proc string))))
+      (funcall (proc-hist-item-proc-filter item) proc string))
+    (puthash (process-buffer proc) item proc-hist--buffers)
+    (write-region string nil (proc-hist-item-log item) 'append 'no-echo)))
 
 (defvar proc-hist--tramp-command nil)
 (defvar proc-hist--tramp-default-directory nil)
