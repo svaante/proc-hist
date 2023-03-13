@@ -83,7 +83,9 @@
     (setf (proc-hist-item-proc item)
           nil)
     ;; Call on finished
-    (funcall proc-hist-on-finished item)
+    ;; BUG: When switching to buffer to early compilation-mode signals
+    ;; `compilation-parse-errors'
+    (run-with-idle-timer 0 nil (apply-partially proc-hist-on-finished item))
     (proc-hist--save)))
 
 (defun proc-hist--add-proc (proc name command directory filter sentinel)
