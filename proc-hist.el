@@ -29,7 +29,7 @@
   "TODO"
   :group 'proc-hist)
 
-(defcustom proc-hist-on-finished #'proc-hist-dwim
+(defcustom proc-hist-on-finished (lambda (item) (proc-hist-dwim item t))
   "TODO"
   :group 'proc-hist)
 
@@ -339,7 +339,7 @@
     (completing-read "Command: " collection nil t)))
 
 ;;; Commands
-(defun proc-hist-dwim (item)
+(defun proc-hist-dwim (item &optional noselect)
   (interactive
    (list
     (funcall proc-hist-completing-read "Open: ")))
@@ -348,8 +348,11 @@
                    (equal item (gethash buffer proc-hist--buffers)))
                  (hash-table-keys proc-hist--buffers))))
     (if (and buffer (buffer-live-p buffer))
-        (unless (equal (current-buffer) buffer)
-          (switch-to-buffer-other-window buffer))
+        (if noselect
+            (unless (get-buffer-window buffer 0)
+              (pop-to-buffer buffer nil t))
+          (unless (equal (current-buffer) buffer)
+            (switch-to-buffer-other-window buffer)))
       (proc-hist-open-log item))))
 
 (defun proc-hist-open-log (item)
