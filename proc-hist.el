@@ -247,8 +247,11 @@
        (propertize " " 'display
                    `(space :align-to (+ left proc-hist--max-cand-width)))
        (proc-hist--truncate
-        (abbreviate-file-name
-         (proc-hist-item-directory item))
+        ;; `abbreviate-file-name' calls tramp if non local path
+        (if (tramp-tramp-file-p (proc-hist-item-directory item))
+            (proc-hist-item-directory item)
+            (abbreviate-file-name
+             (proc-hist-item-directory item)))
          40
         'dired-directory)
        "  "
