@@ -72,12 +72,12 @@
       filename)))
 
 (defun proc-hist--update-status (proc item)
-  (when (and item
-             proc
-             (memq (process-status proc) '(exit signal)))
+  (when (or (null proc)
+            (memq (process-status proc) '(exit signal)))
     ;; Process exited
     (setf (proc-hist-item-status item)
-          (process-exit-status proc))
+          (or (and proc (process-exit-status proc))
+              -1))
     (setf (proc-hist-item-end-time item)
           (proc-hist--time-format))
     (setf (proc-hist-item-proc item)
@@ -392,8 +392,10 @@
   (interactive
    (list
     (funcall proc-hist-completing-read "Kill: ")))
-  (when-let ((proc (proc-hist-item-proc item)))
-    (signal-process proc 'kill)))
+  (if-let ((proc (proc-hist-item-proc item)))
+      (signal-process proc 'kill)
+    (proc-hist--update-status nil item)
+    (error "Process all ready killed")))
 
 ;;; Setup
 (defun proc-hist--advice-commands ()
