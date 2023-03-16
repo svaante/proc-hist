@@ -104,10 +104,6 @@
 
 (defvar proc-hist-consult--hist nil)
 
-;;(defun proc-hist--consult-annotate (table)
-;;  (lambda (item)
-;;    ))
-
 (defun proc-hist-consult-completing-read (prompt &optional filter)
   (let* ((proc-hist--consult-table (proc-hist--candidates filter))
          (match (consult--multi
