@@ -297,11 +297,7 @@
      (lambda (item)
        (let* ((dup-format " <%d>")
               (base-key (proc-hist-item-command item))
-              (key (truncate-string-to-width
-                    base-key
-                    (- proc-hist--max-cand-width
-                       (string-width dup-format))
-                    0 nil ".."))
+              (key base-key)
               (n 1))
          (while (gethash key table)
            (setq key (concat base-key
