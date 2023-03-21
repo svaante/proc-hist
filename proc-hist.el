@@ -41,10 +41,7 @@
   log
   directory
   vc
-  name
-  proc
-  proc-sentinel
-  proc-filter)
+  name)
 
 (defvar proc-hist--items-active (make-hash-table))
 (defvar proc-hist--items-inactive nil)
@@ -80,15 +77,13 @@
               -1))
     (setf (proc-hist-item-end-time item)
           (proc-hist--time-format))
-    (setf (proc-hist-item-proc item)
-          nil)
     ;; Call on finished
     ;; BUG: When switching to buffer to early compilation-mode signals
     ;; `compilation-parse-errors'
     (run-with-idle-timer 0 nil (apply-partially proc-hist-on-finished item))
     (proc-hist--save)))
 
-(defun proc-hist--add-proc (proc name command directory filter sentinel)
+(defun proc-hist--add-proc (proc name command directory)
   (let ((item (make-proc-hist-item
                :command command
                :status nil
@@ -100,24 +95,19 @@
                         (vc-git-working-revision directory)
                         7)
                        "")
-               :name name
-               :proc proc
-               :proc-filter filter
-               :proc-sentinel sentinel)))
+               :name name)))
     (puthash proc item proc-hist--items-active)
     item))
 
-(defun proc-hist--sentinel (proc signal)
-  (when-let ((item (gethash proc proc-hist--items-active)))
-    (when (proc-hist-item-proc-sentinel item)
-      (funcall (proc-hist-item-proc-sentinel item) proc signal))
+(defun proc-hist--create-sentinel (item sentinel)
+  (lambda (proc signal)
+    (funcall sentinel proc signal)
     (puthash (process-buffer proc) item proc-hist--buffers)
     (proc-hist--update-status proc item)))
 
-(defun proc-hist--filter (proc string)
-  (when-let ((item (gethash proc proc-hist--items-active)))
-    (when (proc-hist-item-proc-filter item)
-      (funcall (proc-hist-item-proc-filter item) proc string))
+(defun proc-hist--create-filter (item filter)
+  (lambda (proc string)
+    (funcall filter proc string)
     (puthash (process-buffer proc) item proc-hist--buffers)
     (write-region string nil (proc-hist-item-log item) 'append 'no-echo)))
 
@@ -136,17 +126,15 @@
              (args (thread-first args
                                  (plist-put :filter nil)
                                  (plist-put :sentinel nil)))
-             (proc (apply make-process args))
-             (item (proc-hist--add-proc
-                    proc
-                    (car proc-hist-command)
-                    (funcall (plist-get (cdr proc-hist-command) :command)
-                             (or proc-hist--tramp-command
-                                 (plist-get args :command)))
-                    (or proc-hist--tramp-default-directory
-                        default-directory)
-                    filter
-                    sentinel)))
+             (proc (apply make-process args)))
+        (proc-hist--add-proc
+         proc
+         (car proc-hist-command)
+         (funcall (plist-get (cdr proc-hist-command) :command)
+                  (or proc-hist--tramp-command
+                      (plist-get args :command)))
+         (or proc-hist--tramp-default-directory
+             default-directory))
         (set-process-sentinel proc sentinel)
         (set-process-filter proc filter)
         proc)
@@ -155,15 +143,12 @@
 
 (defun proc-hist--advice-set-process-sentinel (set-process-sentinel process sentinel)
   (if-let* ((item (gethash process proc-hist--items-active)))
-      ;; Set proc hist item sentinel
-      (when (setf (proc-hist-item-proc-sentinel item) sentinel)
-        (funcall set-process-sentinel process #'proc-hist--sentinel))
+      (funcall set-process-sentinel process (proc-hist--create-sentinel item sentinel))
     (funcall set-process-sentinel process sentinel)))
 
 (defun proc-hist--advice-set-process-filter (set-process-filter process filter)
   (if-let ((item (gethash process proc-hist--items-active)))
-      (when (setf (proc-hist-item-proc-filter item) filter)
-        (funcall set-process-filter process #'proc-hist--filter))
+      (funcall set-process-filter process (proc-hist--create-filter item filter))
     (funcall set-process-filter process filter)))
 
 (defun proc-hist--compile-rerun (item)
@@ -356,17 +341,16 @@
    (list
     (funcall proc-hist-completing-read "Open log: ")))
   (when (file-exists-p (proc-hist-item-log item))
-    (let ((buffer (find-file-noselect
-                   (proc-hist-item-log item))))
+    (let ((buffer (thread-first
+                    (format "*%s %s*"
+                            (proc-hist-item-command item)
+                            (proc-hist-item-start-time item))
+                    (generate-new-buffer))))
       (with-current-buffer buffer
-        (rename-buffer
-         (format "*%s %s*"
-                 (proc-hist-item-command item)
-                 (proc-hist-item-start-time item))
-         t)
+        (setq-local default-directory (proc-hist-item-directory item))
+        (insert-file-contents (proc-hist-item-log item) nil)
         (read-only-mode)
-        (compilation-minor-mode)
-        (setq-local default-directory (proc-hist-item-directory item)))
+        (compilation-minor-mode))
       (switch-to-buffer-other-window buffer))))
 
 (defun proc-hist-rerun (item)
@@ -388,10 +372,14 @@
   (interactive
    (list
     (funcall proc-hist-completing-read "Kill: ")))
-  (if-let ((proc (proc-hist-item-proc item)))
+  (if-let ((proc (seq-find
+                  (lambda (proc)
+                    (equal (gethash proc proc-hist--items-active)
+                           item))
+                  (hash-table-keys proc-hist--items-active))))
       (signal-process proc 'kill)
     (proc-hist--update-status nil item)
-    (error "Process all ready killed")))
+    (error "Process already killed")))
 
 ;;; Setup
 (defun proc-hist--advice-commands ()
@@ -428,8 +416,6 @@
         (when (memq 'consult features)
           (require 'proc-hist-consult)
           (setq proc-hist-completing-read 'proc-hist-consult-completing-read))
-        (when (memq 'embark features)
-          (require 'proc-hist-embark))
         ;; add hooks
         (proc-hist--advice-commands))
     ;; remove hooks

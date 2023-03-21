@@ -99,3 +99,18 @@
     (proc-hist-mode +1)
     (should (equal before-items
                    (proc-hist--items)))))
+
+(ert-deftest proc-hist-kill ()
+  (clean-proc-hist-mode)
+  (async-shell-command "sleep 10")
+  (should (equal (length (proc-hist--items))
+                 1))
+  (let ((item (car (proc-hist--items))))
+    (proc-hist-kill item)
+    (poll-until (lambda ()
+                  (seq-every-p
+                   (lambda (item)
+                     (proc-hist-item-status item))
+                   (proc-hist--items))))
+    (should (equal (proc-hist-item-status item)
+                   9))))
