@@ -6,8 +6,7 @@
     proc-hist--active
     proc-hist--project
     proc-hist--compile
-    proc-hist--shell-command
-    proc-hist--free)
+    proc-hist--shell-command)
   "TODO"
   :type '(repeat symbol)
   :group 'proc-hist)
@@ -86,20 +85,6 @@
        (proc-hist--consult-items
         (lambda (item) (equal "Shell"
                               (proc-hist-item-name item))))))
-  "TODO")
-
-(defvar proc-hist--free
-  `(:narrow   (?f . "Free")
-    :category proc-hist
-    :default  nil
-    :hidden   t
-    :annotate proc-hist--consult-annotate
-    :items
-    ,(lambda ()
-       (proc-hist--consult-items
-        (lambda (item) (and (null (proc-hist-item-status item))
-                            (null (proc-hist-item-proc-filter item))
-                            (null (proc-hist-item-proc-sentinel item)))))))
   "TODO")
 
 (defvar proc-hist-consult--hist nil)
