@@ -11,10 +11,12 @@
 (defcustom proc-hist-commands
   '(("compilation"
      :rerun proc-hist--compile-rerun
-     :command proc-hist--shell-command-to-string)
+     :command proc-hist--shell-command-to-string
+     :symbol compile)
     ("Shell"
      :rerun proc-hist--async-shell-command-rerun
-     :command proc-hist--shell-command-to-string))
+     :command proc-hist--shell-command-to-string
+     :symbol async-shell-command))
   "TODO")
 
 (defcustom proc-hist-logs-folder "/tmp"
@@ -46,6 +48,7 @@
 (defvar proc-hist--items-active (make-hash-table))
 (defvar proc-hist--items-inactive nil)
 (defvar proc-hist--buffers (make-hash-table))
+(defvar proc-hist--hooks (make-hash-table))
 
 (defun proc-hist--items ()
   (append
@@ -81,6 +84,8 @@
     ;; BUG: When switching to buffer to early compilation-mode signals
     ;; `compilation-parse-errors'
     (run-with-idle-timer 0 nil (apply-partially proc-hist-on-finished item))
+    (when-let ((hook (gethash proc proc-hist--hooks)))
+      (apply 'apply hook))
     (proc-hist--save)))
 
 (defun proc-hist--add-proc (proc name command directory)
@@ -140,7 +145,6 @@
         proc)
    (apply make-process args)))
 
-
 (defun proc-hist--advice-set-process-sentinel (set-process-sentinel process sentinel)
   (if-let* ((item (gethash process proc-hist--items-active)))
       (funcall set-process-sentinel process (proc-hist--create-sentinel item sentinel))
@@ -187,6 +191,13 @@
                  (seq-drop command 2)
                command)
              " "))
+
+(defun proc-hist--get-proc (item)
+  (seq-find
+   (lambda (proc)
+     (equal (gethash proc proc-hist--items-active)
+            item))
+   (hash-table-keys proc-hist--items-active)))
 
 ;;; Hist
 (defun proc-hist--save ()
@@ -372,17 +383,25 @@
   (interactive
    (list
     (funcall proc-hist-completing-read "Kill: ")))
-  (if-let ((proc (seq-find
-                  (lambda (proc)
-                    (equal (gethash proc proc-hist--items-active)
-                           item))
-                  (hash-table-keys proc-hist--items-active))))
+  (if-let ((proc (proc-hist--get-proc item)))
       (signal-process proc 'kill)
     (proc-hist--update-status nil item)
     (error "Process already killed")))
 
+(defun proc-hist-run-after (item)
+  (interactive
+   (list
+    (funcall proc-hist-completing-read "Run after: ")))
+   (let* ((symbol (thread-first
+                    (proc-hist-item-name (car (proc-hist--items )))
+                    (alist-get proc-hist-commands 'equal)
+                    (plist-get :symbol)))
+          (args (apply (cadr (interactive-form symbol)))))
+     (puthash (proc-hist--get-proc item) (list symbol args) proc-hist--hooks)
+     (message "%s %S process finished" symbol args)))
+
 ;;; Setup
-(defun proc-hist--advice-commands ()
+(defun proc-hist--advice-add ()
   (advice-add 'set-process-filter
               :around
               #'proc-hist--advice-set-process-filter)
@@ -411,13 +430,14 @@
   :global t :group 'proc-hist
   (if proc-hist-mode
       (progn
-        (when (file-exists-p proc-hist-save-file)
+        (when (and (file-exists-p proc-hist-save-file)
+                   (seq-empty-p (proc-hist--items)))
           (load proc-hist-save-file t))
         (when (memq 'consult features)
           (require 'proc-hist-consult)
           (setq proc-hist-completing-read 'proc-hist-consult-completing-read))
         ;; add hooks
-        (proc-hist--advice-commands))
+        (proc-hist--advice-add))
     ;; remove hooks
     (proc-hist--advice-remove)))
 

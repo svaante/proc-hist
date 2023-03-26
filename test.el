@@ -114,3 +114,23 @@
                    (proc-hist--items))))
     (should (equal (proc-hist-item-status item)
                    9))))
+
+(ert-deftest proc-hist-run-after ()
+  (clean-proc-hist-mode)
+  (async-shell-command "sleep 10")
+  (should (equal (length (proc-hist--items))
+                 1))
+  (let ((item (car (proc-hist--items))))
+    (advice-add 'read-shell-command
+                :around
+                (lambda (&rest _) "echo run-after")
+                '((name . remove)))
+    (proc-hist-run-after item)
+    (advice-remove 'read-from-minibuffer 'remove)
+    (proc-hist-kill item)
+    (poll-until (lambda ()
+                  (equal 2 (length (proc-hist--items)))))
+    (should (seq-find (lambda (item)
+                        (equal (proc-hist-item-command item)
+                               "echo run-after"))
+                      (proc-hist--items)))))
