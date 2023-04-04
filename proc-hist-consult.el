@@ -3,6 +3,7 @@
 
 (defcustom proc-hist-consult-sources
   '(proc-hist--all
+    proc-hist--uniq
     proc-hist--active
     proc-hist--project
     proc-hist--compile
@@ -21,6 +22,19 @@
    (hash-table-keys
     proc-hist--consult-table)))
 
+(defun proc-hist--consult-uniq-items ()
+  (let ((hash-set (make-hash-table :test 'equal)))
+    (seq-filter (lambda (key)
+                  (let* ((item (gethash key proc-hist--consult-table))
+                         (set-key (list (proc-hist-item-command item)
+                                        (proc-hist-item-directory item)
+                                        (proc-hist-item-name item))))
+                    (if (gethash set-key hash-set)
+                        nil
+                      (puthash set-key t hash-set))))
+   (hash-table-keys
+    proc-hist--consult-table))))
+
 (defun proc-hist--consult-annotate (candidate)
   (funcall (proc-hist-annotate proc-hist--consult-table) candidate))
 
@@ -30,8 +44,16 @@
     :default  t
     :hidden   nil
     :annotate proc-hist--consult-annotate
-    :items
-    proc-hist--consult-items)
+    :items    proc-hist--consult-items)
+  "TODO")
+
+(defvar proc-hist--uniq
+  `(:narrow   (?u . "Uniq")
+    :category proc-hist
+    :default  t
+    :hidden   nil
+    :annotate proc-hist--consult-annotate
+    :items    proc-hist--consult-uniq-items)
   "TODO")
 
 (defvar proc-hist--active
@@ -40,12 +62,10 @@
     :default  nil
     :hidden   t
     :annotate proc-hist--consult-annotate
-    :items
-    ,(lambda ()
-       (proc-hist--consult-items
-        (lambda (item) (null (proc-hist-item-status item))))))
+    :items    ,(lambda ()
+                 (proc-hist--consult-items
+                  (lambda (item) (null (proc-hist-item-status item))))))
   "TODO")
-
 
 (defvar proc-hist--project
   `(:narrow   (?p . "Project")
@@ -54,11 +74,10 @@
     :hidden   t
     :enabled  nil
     :annotate proc-hist--consult-annotate
-    :items
-    ,(lambda ()
-       (proc-hist--consult-items
-        (lambda (item) (equal (funcall consult-project-function nil)
-                              (proc-hist-item-directory item))))))
+    :items    ,(lambda ()
+                 (proc-hist--consult-items
+                  (lambda (item) (equal (funcall consult-project-function nil)
+                                        (proc-hist-item-directory item))))))
   "TODO")
 
 (defvar proc-hist--compile
@@ -67,11 +86,10 @@
     :default  nil
     :hidden   t
     :annotate proc-hist--consult-annotate
-    :items
-    ,(lambda ()
-       (proc-hist--consult-items
-        (lambda (item) (equal "compilation"
-                              (proc-hist-item-name item))))))
+    :items    ,(lambda ()
+                 (proc-hist--consult-items
+                  (lambda (item) (equal "compilation"
+                                      (proc-hist-item-name item))))))
   "TODO")
 
 (defvar proc-hist--shell-command
@@ -80,11 +98,10 @@
     :default  nil
     :hidden   t
     :annotate proc-hist--consult-annotate
-    :items
-    ,(lambda ()
-       (proc-hist--consult-items
-        (lambda (item) (equal "Shell"
-                              (proc-hist-item-name item))))))
+    :items    ,(lambda ()
+                 (proc-hist--consult-items
+                  (lambda (item) (equal "Shell"
+                                        (proc-hist-item-name item))))))
   "TODO")
 
 (defvar proc-hist-consult--hist nil)
