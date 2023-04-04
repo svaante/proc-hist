@@ -223,16 +223,18 @@
 		    (unless (called-interactively-p 'interactive) 'quiet)))))
 
 ;;; Completion
-(defconst proc-hist--max-cand-width 60)
+(defconst proc-hist--max-cand-width 100)
 
-(defun proc-hist--truncate (string length face)
-  (truncate-string-to-width
-   (propertize
-    (truncate-string-to-width string length 0 nil "...")
-    'face face)
-   length
-   0
-   ?\s))
+(defun proc-hist--truncate (string length face &optional skip-fill)
+  (let ((base-string (propertize
+                      (truncate-string-to-width string length 0 nil "...")
+                      'face face)))
+    (if skip-fill
+        base-string
+      (truncate-string-to-width base-string
+                                length
+                                0
+                                ?\s))))
 
 (defun proc-hist-annotate (table)
   (lambda (candidate)
@@ -292,14 +294,22 @@
     (seq-do
      (lambda (item)
        (let* ((dup-format " <%d>")
-              (base-key (proc-hist-item-command item))
+              (base-key (proc-hist--truncate (proc-hist-item-command item)
+                                             proc-hist--max-cand-width
+                                             nil
+                                             t))
               (key base-key)
               (n 1))
          (while (gethash key table)
-           (setq key (concat base-key
-                             (propertize (format " <%d>" n)
-                                         'face 'shadow))
-                 n (1+ n)))
+           (let ((suffix (propertize (format " <%d>" n)
+                                     'face 'shadow)))
+             (setq key (concat (proc-hist--truncate (proc-hist-item-command item)
+                                                    (- proc-hist--max-cand-width
+                                                       (string-width suffix))
+                                                    nil
+                                                    t)
+                               suffix)
+                   n (1+ n))))
          (puthash key item table)))
       (reverse items))
     table))
