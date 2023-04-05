@@ -125,7 +125,7 @@
     (apply tramp-handle-make-process args)))
 
 (defun proc-hist--advice-make-process (make-process &rest args)
-  (if-let* ((proc-hist-command (proc-hist--proc-hist-command args)))
+  (if-let* ((proc-hist-command (proc-hist--proc-hist-command-p args)))
       (let* ((filter (plist-get args :filter))
              (sentinel (plist-get args :sentinel))
              (args (thread-first args
@@ -164,7 +164,7 @@
     (async-shell-command (proc-hist-item-command item))))
 
 ;;; Util
-(defun proc-hist--proc-hist-command (args)
+(defun proc-hist--proc-hist-command-p (args)
   (seq-find
    (lambda (proc-hist-command)
      (let ((id (car proc-hist-command)))
