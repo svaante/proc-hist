@@ -35,6 +35,10 @@
   "TODO"
   :group 'proc-hist)
 
+(defcustom proc-hist-history-create-retain-p #'proc-hist--history-create-retain-p-fn
+  "TODO"
+  :group 'proc-hist)
+
 (cl-defstruct (proc-hist-item (:type list))
   command
   status
@@ -200,7 +204,44 @@
    (hash-table-keys proc-hist--items-active)))
 
 ;;; Hist
+(defun proc-hist--prune ()
+  (let ((retain-p (funcall proc-hist-history-create-retain-p)))
+    (setq proc-hist--items-inactive
+         (cl-loop for item in proc-hist--items-inactive
+                  if (funcall retain-p item)
+                  collect item
+                  else
+                  do (delete-file (proc-hist-item-log item))))
+    (cl-loop for key in (hash-table-keys proc-hist--items-active)
+            unless (funcall retain-p (gethash key proc-hist--items-active))
+            do (delete-file (proc-hist-item-log (gethash key proc-hist--items-active)))
+               (remhash key proc-hist--items-active))))
+
+(defun proc-hist--history-create-retain-p-fn ()
+  (let ((unique-lookup (make-hash-table :test 'equal)))
+    (seq-do (lambda (item)
+              (let ((key (cons (string-trim (proc-hist-item-command item))
+                               (proc-hist-item-directory item))))
+                (unless (gethash key unique-lookup)
+                  (puthash key item unique-lookup))))
+            (proc-hist--items))
+    (lambda (item)
+      (or
+       ;; Keep if {dir command} unique
+       (eql item (gethash (cons (string-trim (proc-hist-item-command item))
+                                (proc-hist-item-directory item))
+                          unique-lookup))
+       ;; Keep if entry is younger then two weeks
+       (or (not (proc-hist-item-end-time item))
+           (< (thread-last (proc-hist-item-end-time item)
+                           (parse-time-string)
+                           (encode-time)
+                           (float-time)
+                           (- (float-time (current-time))))
+              1209600))))))
+
 (defun proc-hist--save ()
+  (proc-hist--prune)
   (with-temp-buffer
     (insert
      (concat

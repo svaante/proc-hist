@@ -134,3 +134,55 @@
                         (equal (proc-hist-item-command item)
                                "echo run-after"))
                       (proc-hist--items)))))
+
+(defun create-mock-item (command dir end-time)
+  (make-proc-hist-item
+   :command command
+   :status nil ;; not used
+   :start-time "" ;; not used
+   :end-time (and end-time (format-time-string "%Y-%m-%d %T" end-time))
+   :log "/tmp/not-a-file"
+   :directory dir
+   :vc ""
+   :name nil))
+
+(ert-deftest proc-hist-prune ()
+    ;; Keep all young items
+    (clean-proc-hist-mode)
+    (puthash 1 (create-mock-item "test" "/dir" (current-time)) proc-hist--items-active)
+    (puthash 2 (create-mock-item "test" "/dir" (current-time)) proc-hist--items-active)
+    (setq proc-hist--items-inactive
+          (list (create-mock-item "test" "/dir" (current-time))
+                (create-mock-item "test" "/dir" (current-time))))
+    (proc-hist--prune)
+    (should
+     (equal (length (proc-hist--items))
+            4))
+    ;; Keep all old items if uniq
+    (clean-proc-hist-mode)
+    (puthash 1 (create-mock-item "test1" "/dir1" 0) proc-hist--items-active)
+    (puthash 2 (create-mock-item "test2" "/dir1" 0) proc-hist--items-active)
+    (setq proc-hist--items-inactive (list
+                                     (create-mock-item "test2" "/dir2" 0)
+                                     (create-mock-item "test2" "/dir3" 0)))
+    (proc-hist--prune)
+    (should
+     (equal (length (proc-hist--items))
+            4))
+    ;; Delete old non uniq items from `proc-hist--items-inactive'
+    (clean-proc-hist-mode)
+    (setq proc-hist--items-inactive
+          (list
+           (create-mock-item "test" "/dir" 0)
+           (create-mock-item "test" "/dir" 0)))
+    (proc-hist--prune)
+    (should
+     (equal (length (proc-hist--items)) 1))
+    ;; Delete old non uniq items from `proc-hist--items-active'
+    (clean-proc-hist-mode)
+    (puthash 1 (create-mock-item "test" "/dir" 0) proc-hist--items-active)
+    (puthash 2 (create-mock-item "test" "/dir" 0) proc-hist--items-active)
+    (proc-hist--prune)
+    (should
+     (equal (length (proc-hist--items))
+            1)))
