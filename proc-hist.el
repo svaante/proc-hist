@@ -10,10 +10,12 @@
 
 (defcustom proc-hist-commands
   '(("compilation"
+     :predicate "compilation"
      :rerun proc-hist--compile-rerun
      :command proc-hist--shell-command-to-string
      :symbol compile)
     ("Shell"
+     :predicate "Shell"
      :rerun proc-hist--async-shell-command-rerun
      :command proc-hist--shell-command-to-string
      :symbol async-shell-command))
@@ -53,6 +55,8 @@
 (defvar proc-hist--items-inactive nil)
 (defvar proc-hist--buffers (make-hash-table))
 (defvar proc-hist--hooks (make-hash-table))
+
+(defvar proc-hist--injected-command nil)
 
 (defun proc-hist--items ()
   (append
@@ -171,16 +175,21 @@
 (defun proc-hist--proc-hist-command-p (args)
   (seq-find
    (lambda (proc-hist-command)
-     (let ((id (car proc-hist-command)))
-       (cond
-        ((stringp id)
-         (string-match-p id
-                         (plist-get args :name)))
-        ((symbolp id)
-         (with-current-buffer (or (plist-get args :buffer)
-                                  (current-buffer))
-           (and (boundp id) id)))
-        (t nil))))
+     (let ((pred (plist-get (cdr proc-hist-command) :predicate)))
+       (or
+        ;; Match make-process :name key
+        (and (stringp pred)
+             (string-match-p pred
+                             (plist-get args :name)))
+        ;; Match on bound and true
+        (and (symbolp pred)
+             (with-current-buffer (or (plist-get args :buffer)
+                                      (current-buffer))
+               (and (boundp pred) id)))
+        ;; Check commands thats injection "based"
+        (and (null pred)
+             (equal proc-hist--injected-command
+                    (car proc-hist-command))))))
    proc-hist-commands))
 
 (defun proc-hist--get-rerun (rerun-command)
@@ -289,29 +298,22 @@
         ;; `abbreviate-file-name' calls tramp if non local path
         (if (tramp-tramp-file-p (proc-hist-item-directory item))
             (proc-hist-item-directory item)
-            (abbreviate-file-name
-             (proc-hist-item-directory item)))
-         40
+          (abbreviate-file-name
+           (proc-hist-item-directory item)))
+        40
         'dired-directory)
        "  "
        (proc-hist--truncate
         (format-seconds
-         "%x%yy %dd %hh %mm %ss%z"
-         (- (if (not (proc-hist-item-end-time item))
-                (time-to-seconds)
-              (thread-first (proc-hist-item-end-time item)
-                            (parse-time-string)
-                            (encode-time)
-                            (float-time)))
-            (thread-first (proc-hist-item-start-time item)
-                          (parse-time-string)
-                          (encode-time)
-                          (float-time))))
-         10
-         (cond
-          ((not (proc-hist-item-end-time item)) 'default)
-          ((zerop (proc-hist-item-status item)) 'success)
-          (t 'error)))
+         "0s%x%yy %dd %hh %mm %ss%z"
+         (- (time-to-seconds (and (proc-hist-item-end-time item)
+                                  (date-to-time (proc-hist-item-end-time item))))
+            (time-to-seconds (date-to-time (proc-hist-item-start-time item)))))
+        10
+        (cond
+         ((not (proc-hist-item-end-time item)) 'default)
+         ((zerop (proc-hist-item-status item)) 'success)
+         (t 'error)))
        "  "
        (proc-hist--truncate
         (proc-hist-item-start-time item)
@@ -323,7 +325,7 @@
                 (proc-hist-item-name item))
         20
         'italic)
-        "  "
+       "  "
        (propertize
         (proc-hist-item-vc item)
         'face 'magit-hash)))))
@@ -450,6 +452,11 @@
           (args (apply (cadr (interactive-form symbol)))))
      (puthash (proc-hist--get-proc item) (list symbol args) proc-hist--hooks)
      (message "%s %S process finished" symbol args)))
+
+(defun proc-hist-copy-as-kill-command (item)
+  (interactive
+   (list (funcall proc-hist-completing-read "Copy command: ")))
+  (kill-new (proc-hist-item-command item)))
 
 ;;; Setup
 (defun proc-hist--advice-add ()
