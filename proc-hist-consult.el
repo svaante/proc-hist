@@ -3,7 +3,7 @@
 
 (defcustom proc-hist-consult-sources
   '(proc-hist--all
-    proc-hist--uniq
+    proc-hist--unique
     proc-hist--active
     proc-hist--project
     proc-hist--compile
@@ -22,7 +22,7 @@
    (hash-table-keys
     proc-hist--consult-table)))
 
-(defun proc-hist--consult-uniq-items ()
+(defun proc-hist--consult-unique-items ()
   (let ((hash-set (make-hash-table :test 'equal)))
     (seq-filter (lambda (key)
                   (let* ((item (gethash key proc-hist--consult-table))
@@ -47,13 +47,13 @@
     :items    proc-hist--consult-items)
   "TODO")
 
-(defvar proc-hist--uniq
-  `(:narrow   (?u . "Uniq")
+(defvar proc-hist--unique
+  `(:narrow   (?u . "Unique")
     :category proc-hist
     :default  t
     :hidden   nil
     :annotate proc-hist--consult-annotate
-    :items    proc-hist--consult-uniq-items)
+    :items    proc-hist--consult-unique-items)
   "TODO")
 
 (defvar proc-hist--active
