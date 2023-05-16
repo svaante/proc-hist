@@ -49,7 +49,9 @@
   log
   directory
   vc
-  name)
+  name
+  (filter nil)
+  (sentinel nil))
 
 (defvar proc-hist--items-active (make-hash-table))
 (defvar proc-hist--items-inactive nil)
@@ -96,7 +98,7 @@
       (apply 'apply hook))
     (proc-hist--save)))
 
-(defun proc-hist--add-proc (proc name command directory)
+(defun proc-hist--add-proc (proc name command directory filter sentinel)
   (let ((item (make-proc-hist-item
                :command command
                :status nil
@@ -108,19 +110,23 @@
                         (vc-git-working-revision directory)
                         7)
                        "")
-               :name name)))
+               :name name
+               :filter filter
+               :sentinel sentinel)))
     (puthash proc item proc-hist--items-active)
     item))
 
-(defun proc-hist--create-sentinel (item sentinel)
-  (lambda (proc signal)
-    (funcall sentinel proc signal)
+(defun proc-hist--sentinel (proc signal)
+  (when-let ((item (gethash proc proc-hist--items-active)))
+    (when (proc-hist-item-sentinel item)
+      (funcall (proc-hist-item-sentinel item) proc signal))
     (puthash (process-buffer proc) item proc-hist--buffers)
     (proc-hist--update-status proc item)))
 
-(defun proc-hist--create-filter (item filter)
-  (lambda (proc string)
-    (funcall filter proc string)
+(defun proc-hist--filter (proc string)
+  (when-let ((item (gethash proc proc-hist--items-active)))
+    (when (proc-hist-item-filter item)
+      (funcall (proc-hist-item-filter item) proc string))
     (puthash (process-buffer proc) item proc-hist--buffers)
     (write-region string nil (proc-hist-item-log item) 'append 'no-echo)))
 
@@ -147,20 +153,27 @@
                   (or proc-hist--tramp-command
                       (plist-get args :command)))
          (or proc-hist--tramp-default-directory
-             default-directory))
+             default-directory)
+         filter
+         sentinel)
         (set-process-sentinel proc sentinel)
         (set-process-filter proc filter)
         proc)
    (apply make-process args)))
 
-(defun proc-hist--advice-set-process-sentinel (set-process-sentinel process sentinel)
-  (if-let* ((item (gethash process proc-hist--items-active)))
-      (funcall set-process-sentinel process (proc-hist--create-sentinel item sentinel))
+(defun proc-hist--advice-set-process-sentinel (set-process-sentinel
+                                               process
+                                               sentinel)
+  (if-let ((item (gethash process proc-hist--items-active)))
+      ;; Set proc hist item sentinel
+      (when (setf (proc-hist-item-sentinel item) sentinel)
+        (funcall set-process-sentinel process #'proc-hist--sentinel))
     (funcall set-process-sentinel process sentinel)))
 
 (defun proc-hist--advice-set-process-filter (set-process-filter process filter)
   (if-let ((item (gethash process proc-hist--items-active)))
-      (funcall set-process-filter process (proc-hist--create-filter item filter))
+      (when (setf (proc-hist-item-filter item) filter)
+        (funcall set-process-filter process #'proc-hist--filter))
     (funcall set-process-filter process filter)))
 
 (defun proc-hist--compile-rerun (item)
@@ -261,7 +274,10 @@
 	  (print-level nil)
 	  (print-quoted t))
       (prin1 `(setq proc-hist--items-inactive
-		    ',(proc-hist--items))
+                    ;; Drop `filter' and `sentinel' from item
+		    ',(mapcar (lambda (item)
+                                (seq-take item 8))
+                              (proc-hist--items)))
 	     (current-buffer)))
     ;; Write to `proc-hist-save-file'
     (let ((file-precious-flag t)

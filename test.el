@@ -97,8 +97,13 @@
     (setq proc-hist--buffers (make-hash-table))
     (proc-hist-mode -1)
     (proc-hist-mode +1)
-    (should (equal before-items
-                   (proc-hist--items)))))
+    (should (equal
+             (mapcar (lambda (item)
+                       ;; Skip filter and sentinel
+                       (seq-take item 8))
+                     before-items
+                     )
+             (proc-hist--items)))))
 
 (ert-deftest proc-hist-kill ()
   (clean-proc-hist-mode)
@@ -186,3 +191,18 @@
     (should
      (equal (length (proc-hist--items))
             1)))
+
+(ert-deftest tramp-test ()
+  (clean-proc-hist-mode)
+  (find-file (format "/ssh:%s@localhost:"
+                     user-login-name))
+  (async-shell-command "echo async-shell-command")
+  (let ((item (car (proc-hist--items))))
+    (poll-until (lambda () (proc-hist-item-status item)))
+    ;; Assert hist-item
+    (should (equal (length (proc-hist--items))
+                   1))
+    (should (equal (proc-hist-item-command item)
+                   "echo async-shell-command"))
+    (should (equal (proc-hist-item-status item)
+                   0))))
