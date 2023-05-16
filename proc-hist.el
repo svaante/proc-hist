@@ -98,7 +98,7 @@
       (apply 'apply hook))
     (proc-hist--save)))
 
-(defun proc-hist--add-proc (proc name command directory filter sentinel)
+(defun proc-hist--add-proc (proc name command directory)
   (let ((item (make-proc-hist-item
                :command command
                :status nil
@@ -110,9 +110,7 @@
                         (vc-git-working-revision directory)
                         7)
                        "")
-               :name name
-               :filter filter
-               :sentinel sentinel)))
+               :name name)))
     (puthash proc item proc-hist--items-active)
     item))
 
@@ -153,9 +151,7 @@
                   (or proc-hist--tramp-command
                       (plist-get args :command)))
          (or proc-hist--tramp-default-directory
-             default-directory)
-         filter
-         sentinel)
+             default-directory))
         (set-process-sentinel proc sentinel)
         (set-process-filter proc filter)
         proc)
@@ -164,15 +160,21 @@
 (defun proc-hist--advice-set-process-sentinel (set-process-sentinel
                                                process
                                                sentinel)
-  (if-let ((item (gethash process proc-hist--items-active)))
+  (if-let ((item (gethash process proc-hist--items-active))
+           (_ sentinel)
+           ;; This do not set `tramp-process-sentinel'
+           (_ (not (equal sentinel 'tramp-process-sentinel))))
       ;; Set proc hist item sentinel
-      (when (setf (proc-hist-item-sentinel item) sentinel)
+      (progn
+        (setf (proc-hist-item-sentinel item) sentinel)
         (funcall set-process-sentinel process #'proc-hist--sentinel))
     (funcall set-process-sentinel process sentinel)))
 
 (defun proc-hist--advice-set-process-filter (set-process-filter process filter)
-  (if-let ((item (gethash process proc-hist--items-active)))
-      (when (setf (proc-hist-item-filter item) filter)
+  (if-let ((item (gethash process proc-hist--items-active))
+           (_ filter))
+      (progn
+        (setf (proc-hist-item-filter item) filter)
         (funcall set-process-filter process #'proc-hist--filter))
     (funcall set-process-filter process filter)))
 
