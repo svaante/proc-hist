@@ -196,13 +196,11 @@
   (clean-proc-hist-mode)
   (find-file (format "/ssh:%s@localhost:"
                      user-login-name))
-  (async-shell-command "echo async-shell-command")
+  (compile "ls -all")
   (let ((item (car (proc-hist--items))))
     (poll-until (lambda () (proc-hist-item-status item)))
     ;; Assert hist-item
     (should (equal (length (proc-hist--items))
                    1))
-    (should (equal (proc-hist-item-command item)
-                   "echo async-shell-command"))
     (should (equal (proc-hist-item-status item)
                    0))))

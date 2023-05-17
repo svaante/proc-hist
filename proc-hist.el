@@ -1,4 +1,4 @@
-;;; proc-hist.el --- History managment for processes -*- lexical-binding: t -*-
+;;; proc-hist.el --- History management for processes -*- lexical-binding: t -*-
 
 (require 'subr-x)
 (require 'vc-git)
@@ -49,9 +49,7 @@
   log
   directory
   vc
-  name
-  (filter nil)
-  (sentinel nil))
+  name)
 
 (defvar proc-hist--items-active (make-hash-table))
 (defvar proc-hist--items-inactive nil)
@@ -68,17 +66,17 @@
 (defun proc-hist--time-format ()
   (format-time-string "%Y-%m-%d %T"))
 
-(defun proc-hist--log (proc &optional n)
+(defun proc-hist--log (&optional n)
   (let* ((n (or n 0))
          (filename (concat
-                   (format "%s%s_%s.log"
+                   (format "%s%s"
                            (file-name-as-directory proc-hist-logs-folder)
-                           (process-id proc)
                            (format-time-string "%Y-%m-%d%T"))
                    (when (> n 0)
-                       (format "_%d" n)))))
+                     (format "_%d" n))
+                   ".log")))
     (if (file-exists-p filename)
-        (proc-hist--log proc (1+ n))
+        (proc-hist--log (1+ n))
       filename)))
 
 (defun proc-hist--update-status (proc item)
@@ -104,7 +102,7 @@
                :status nil
                :start-time (proc-hist--time-format)
                :end-time nil
-               :log (proc-hist--log proc)
+               :log (proc-hist--log)
                :directory directory
                :vc (or (seq-take
                         (vc-git-working-revision directory)
@@ -114,68 +112,48 @@
     (puthash proc item proc-hist--items-active)
     item))
 
-(defun proc-hist--sentinel (proc signal)
-  (when-let ((item (gethash proc proc-hist--items-active)))
-    (when (proc-hist-item-sentinel item)
-      (funcall (proc-hist-item-sentinel item) proc signal))
-    (puthash (process-buffer proc) item proc-hist--buffers)
-    (proc-hist--update-status proc item)))
+(defun proc-hist--create-sentinel (sentinel)
+  (lambda (proc signal)
+    (funcall sentinel proc signal)
+    (when-let ((item (gethash proc proc-hist--items-active)))
+      (puthash (process-buffer proc) item proc-hist--buffers)
+      (proc-hist--update-status proc item))))
 
-(defun proc-hist--filter (proc string)
-  (when-let ((item (gethash proc proc-hist--items-active)))
-    (when (proc-hist-item-filter item)
-      (funcall (proc-hist-item-filter item) proc string))
-    (puthash (process-buffer proc) item proc-hist--buffers)
-    (write-region string nil (proc-hist-item-log item) 'append 'no-echo)))
-
-(defvar proc-hist--tramp-command nil)
-(defvar proc-hist--tramp-default-directory nil)
-
-(defun proc-hist--advice-tramp-handle-make-process (tramp-handle-make-process &rest args)
-  (let ((proc-hist--tramp-command (plist-get args :command))
-        (proc-hist--tramp-default-directory default-directory))
-    (apply tramp-handle-make-process args)))
+(defun proc-hist--create-filter (filter)
+  (lambda (proc string)
+    (funcall filter proc string)
+    (when-let ((item (gethash proc proc-hist--items-active)))
+      (puthash (process-buffer proc) item proc-hist--buffers)
+      (write-region string nil (proc-hist-item-log item) 'append 'no-echo))))
 
 (defun proc-hist--advice-make-process (make-process &rest args)
   (if-let* ((proc-hist-command (proc-hist--proc-hist-command-p args)))
       (let* ((filter (plist-get args :filter))
              (sentinel (plist-get args :sentinel))
-             (args (thread-first args
-                                 (plist-put :filter nil)
-                                 (plist-put :sentinel nil)))
+             (args (or (and filter (plist-put args :filter (proc-hist--create-filter filter)))
+                       args))
+             (args (or (and sentinel (plist-put args :sentinel (proc-hist--create-sentinel sentinel)))
+                       args))
              (proc (apply make-process args)))
         (proc-hist--add-proc
          proc
          (car proc-hist-command)
          (funcall (plist-get (cdr proc-hist-command) :command)
-                  (or proc-hist--tramp-command
-                      (plist-get args :command)))
-         (or proc-hist--tramp-default-directory
-             default-directory))
-        (set-process-sentinel proc sentinel)
-        (set-process-filter proc filter)
+                  (plist-get args :command))
+         default-directory)
         proc)
-   (apply make-process args)))
+    (apply make-process args)))
 
 (defun proc-hist--advice-set-process-sentinel (set-process-sentinel
                                                process
                                                sentinel)
-  (if-let ((item (gethash process proc-hist--items-active))
-           (_ sentinel)
-           ;; This do not set `tramp-process-sentinel'
-           (_ (not (equal sentinel 'tramp-process-sentinel))))
-      ;; Set proc hist item sentinel
-      (progn
-        (setf (proc-hist-item-sentinel item) sentinel)
-        (funcall set-process-sentinel process #'proc-hist--sentinel))
+  (if-let ((item (gethash process proc-hist--items-active)))
+      (funcall set-process-sentinel process (proc-hist--create-sentinel sentinel))
     (funcall set-process-sentinel process sentinel)))
 
 (defun proc-hist--advice-set-process-filter (set-process-filter process filter)
-  (if-let ((item (gethash process proc-hist--items-active))
-           (_ filter))
-      (progn
-        (setf (proc-hist-item-filter item) filter)
-        (funcall set-process-filter process #'proc-hist--filter))
+  (if-let ((item (gethash process proc-hist--items-active)))
+      (funcall set-process-filter process (proc-hist--create-filter filter))
     (funcall set-process-filter process filter)))
 
 (defun proc-hist--compile-rerun (item)
@@ -188,24 +166,25 @@
 
 ;;; Util
 (defun proc-hist--proc-hist-command-p (args)
-  (seq-find
-   (lambda (proc-hist-command)
-     (let ((pred (plist-get (cdr proc-hist-command) :predicate)))
-       (or
-        ;; Match make-process :name key
-        (and (stringp pred)
-             (string-match-p pred
-                             (plist-get args :name)))
-        ;; Match on bound and true
-        (and (symbolp pred)
-             (with-current-buffer (or (plist-get args :buffer)
-                                      (current-buffer))
-               (and (boundp pred) id)))
-        ;; Check commands thats injection "based"
-        (and (null pred)
-             (equal proc-hist--injected-command
-                    (car proc-hist-command))))))
-   proc-hist-commands))
+  (unless (equal (plist-get args :sentinel) 'tramp-process-sentinel)
+    (seq-find
+     (lambda (proc-hist-command)
+       (let ((pred (plist-get (cdr proc-hist-command) :predicate)))
+         (or
+          ;; Match make-process :name key
+          (and (stringp pred)
+               (string-match-p pred
+                               (plist-get args :name)))
+          ;; Match on bound and true
+          (and (symbolp pred)
+               (with-current-buffer (or (plist-get args :buffer)
+                                        (current-buffer))
+                 (and (boundp pred) id)))
+          ;; Check commands thats injection "based"
+          (and (null pred)
+               (equal proc-hist--injected-command
+                      (car proc-hist-command))))))
+     proc-hist-commands)))
 
 (defun proc-hist--get-rerun (rerun-command)
   (thread-first rerun-command
@@ -484,9 +463,6 @@
   (advice-add 'set-process-sentinel
               :around
               #'proc-hist--advice-set-process-sentinel)
-  (advice-add 'tramp-sh-handle-make-process
-              :around
-              #'proc-hist--advice-tramp-handle-make-process)
   (advice-add 'make-process
               :around
               #'proc-hist--advice-make-process))
@@ -496,8 +472,6 @@
                  #'proc-hist--advice-set-process-filter)
   (advice-remove 'set-process-sentinel
                  #'proc-hist--advice-set-process-sentinel)
-  (advice-remove 'tramp-sh-handle-make-process
-                 #'proc-hist--advice-tramp-handle-make-process)
   (advice-remove 'make-process
                  #'proc-hist--advice-make-process))
 ;;;###autoload
