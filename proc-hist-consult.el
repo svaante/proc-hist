@@ -75,9 +75,10 @@
     :enabled  nil
     :annotate proc-hist--consult-annotate
     :items    ,(lambda ()
-                 (proc-hist--consult-items
-                  (lambda (item) (equal (funcall consult-project-function nil)
-                                        (proc-hist-item-directory item))))))
+                 (when (consult--project-root)
+                   (proc-hist--consult-items
+                    (lambda (item) (equal (funcall consult-project-function nil)
+                                          (proc-hist-item-directory item)))))))
   "TODO")
 
 (defvar proc-hist--compile
