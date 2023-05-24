@@ -51,7 +51,7 @@
   vc
   name)
 
-(defvar proc-hist--items-active (make-hash-table))
+(defvar proc-hist--items-session (make-hash-table))
 (defvar proc-hist--items-inactive nil)
 (defvar proc-hist--buffers (make-hash-table))
 (defvar proc-hist--hooks (make-hash-table))
@@ -60,7 +60,7 @@
 
 (defun proc-hist--items ()
   (append
-   (hash-table-values proc-hist--items-active)
+   (hash-table-values proc-hist--items-session)
    proc-hist--items-inactive))
 
 (defun proc-hist--time-format ()
@@ -109,20 +109,20 @@
                         7)
                        "")
                :name name)))
-    (puthash proc item proc-hist--items-active)
+    (puthash proc item proc-hist--items-session)
     item))
 
 (defun proc-hist--create-sentinel (sentinel)
   (lambda (proc signal)
     (funcall sentinel proc signal)
-    (when-let ((item (gethash proc proc-hist--items-active)))
+    (when-let ((item (gethash proc proc-hist--items-session)))
       (puthash (process-buffer proc) item proc-hist--buffers)
       (proc-hist--update-status proc item))))
 
 (defun proc-hist--create-filter (filter)
   (lambda (proc string)
     (funcall filter proc string)
-    (when-let ((item (gethash proc proc-hist--items-active)))
+    (when-let ((item (gethash proc proc-hist--items-session)))
       (puthash (process-buffer proc) item proc-hist--buffers)
       (write-region string nil (proc-hist-item-log item) 'append 'no-echo))))
 
@@ -147,12 +147,12 @@
 (defun proc-hist--advice-set-process-sentinel (set-process-sentinel
                                                process
                                                sentinel)
-  (if-let ((item (gethash process proc-hist--items-active)))
+  (if-let ((item (gethash process proc-hist--items-session)))
       (funcall set-process-sentinel process (proc-hist--create-sentinel sentinel))
     (funcall set-process-sentinel process sentinel)))
 
 (defun proc-hist--advice-set-process-filter (set-process-filter process filter)
-  (if-let ((item (gethash process proc-hist--items-active)))
+  (if-let ((item (gethash process proc-hist--items-session)))
       (funcall set-process-filter process (proc-hist--create-filter filter))
     (funcall set-process-filter process filter)))
 
@@ -202,9 +202,9 @@
 (defun proc-hist--get-proc (item)
   (seq-find
    (lambda (proc)
-     (equal (gethash proc proc-hist--items-active)
+     (equal (gethash proc proc-hist--items-session)
             item))
-   (hash-table-keys proc-hist--items-active)))
+   (hash-table-keys proc-hist--items-session)))
 
 ;;; Hist
 (defun proc-hist--prune ()
@@ -215,10 +215,10 @@
                   collect item
                   else
                   do (delete-file (proc-hist-item-log item))))
-    (cl-loop for key in (hash-table-keys proc-hist--items-active)
-            unless (funcall retain-p (gethash key proc-hist--items-active))
-            do (delete-file (proc-hist-item-log (gethash key proc-hist--items-active)))
-               (remhash key proc-hist--items-active))))
+    (cl-loop for key in (hash-table-keys proc-hist--items-session)
+            unless (funcall retain-p (gethash key proc-hist--items-session))
+            do (delete-file (proc-hist-item-log (gethash key proc-hist--items-session)))
+               (remhash key proc-hist--items-session))))
 
 (defun proc-hist--history-create-retain-p-fn ()
   (let ((unique-lookup (make-hash-table :test 'equal)))
