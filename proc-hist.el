@@ -10,12 +10,12 @@
 
 (defcustom proc-hist-commands
   '(("compilation"
-     :predicate "compilation"
+     :commands (recompile compile project-compile)
      :rerun proc-hist--compile-rerun
      :command proc-hist--shell-command-to-string
      :symbol compile)
     ("Shell"
-     :predicate "Shell"
+     :commands (async-shell-command project-async-shell-command)
      :rerun proc-hist--async-shell-command-rerun
      :command proc-hist--shell-command-to-string
      :symbol async-shell-command))
@@ -169,22 +169,7 @@
   (unless (equal (plist-get args :sentinel) 'tramp-process-sentinel)
     (seq-find
      (lambda (proc-hist-command)
-       (let ((pred (plist-get (cdr proc-hist-command) :predicate)))
-         (or
-          ;; Match make-process :name key
-          (and (stringp pred)
-               (stringp (plist-get args :name))
-               (string-match-p pred
-                               (plist-get args :name)))
-          ;; Match on bound and true
-          (and (symbolp pred)
-               (with-current-buffer (or (plist-get args :buffer)
-                                        (current-buffer))
-                 (and (boundp pred) id)))
-          ;; Check commands thats injection "based"
-          (and (null pred)
-               (equal proc-hist--injected-command
-                      (car proc-hist-command))))))
+       (and (member this-command (plist-get (cdr proc-hist-command) :commands))))
      proc-hist-commands)))
 
 (defun proc-hist--get-rerun (rerun-command)
