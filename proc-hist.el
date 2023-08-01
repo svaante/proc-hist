@@ -173,6 +173,7 @@
          (or
           ;; Match make-process :name key
           (and (stringp pred)
+               (stringp (plist-get args :name))
                (string-match-p pred
                                (plist-get args :name)))
           ;; Match on bound and true
