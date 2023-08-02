@@ -10,12 +10,17 @@
 
 (defcustom proc-hist-commands
   '(("compilation"
-     :commands (recompile compile project-compile)
+     :commands (recompile
+                compile
+                project-compile
+                proc-hist--compile-rerun)
      :rerun proc-hist--compile-rerun
      :command proc-hist--shell-command-to-string
      :symbol compile)
     ("Shell"
-     :commands (async-shell-command project-async-shell-command)
+     :commands (async-shell-command
+                project-async-shell-command
+                proc-hist--async-shell-command-rerun)
      :rerun proc-hist--async-shell-command-rerun
      :command proc-hist--shell-command-to-string
      :symbol async-shell-command))
@@ -404,7 +409,8 @@
   (interactive
    (list
     (funcall proc-hist-completing-read "Rerun: ")))
-  (let ((rerun (proc-hist--get-rerun (proc-hist-item-name item))))
+  (let* ((rerun (proc-hist--get-rerun (proc-hist-item-name item)))
+         (this-command rerun))
     (funcall rerun item)))
 
 (defun proc-hist-rerun-as (item rerun-command)
@@ -412,8 +418,9 @@
    (list
     (funcall proc-hist-completing-read "Rerun: ")
     (funcall #'proc-hist-completing-read-command)))
-  (let ((rerun (proc-hist--get-rerun rerun-command)))
-    (funcall rerun item)))
+  (let* ((rerun (proc-hist--get-rerun (proc-hist-item-name item)))
+         (this-command rerun))
+    (funcall-interactively rerun item)))
 
 (defun proc-hist-kill (item)
   (interactive
