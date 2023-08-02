@@ -475,7 +475,16 @@
       (progn
         (when (and (file-exists-p proc-hist-save-file)
                    (seq-empty-p (proc-hist--items)))
-          (load proc-hist-save-file t))
+          (load proc-hist-save-file t)
+          (dolist (item proc-hist--items-inactive)
+            ;; FIXME Should really handle these processes in a nicer way
+            ;; If emacs is killed it brings all sub-processes down with it
+            ;; they don't receive a sentinel call
+            (unless (proc-hist-item-status item)
+              (setf (proc-hist-item-status item)
+                    -1)
+              (setf (proc-hist-item-end-time item)
+                    (proc-hist--time-format)))))
         (when (memq 'consult features)
           (require 'proc-hist-consult)
           (setq proc-hist-completing-read 'proc-hist-consult-completing-read))
