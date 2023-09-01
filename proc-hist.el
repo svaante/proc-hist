@@ -448,6 +448,13 @@
    (list (funcall proc-hist-completing-read "Copy command: ")))
   (kill-new (proc-hist-item-command item)))
 
+(defun proc-hist-dired (item)
+  (interactive
+   (list
+    (funcall proc-hist-completing-read "Open folder: ")))
+  (let ((directory (proc-hist-item-directory item)))
+    (dired directory)))
+
 ;;; Setup
 (defun proc-hist--advice-add ()
   (advice-add 'set-process-filter

@@ -7,7 +7,8 @@
   "r" 'proc-hist-rerun
   "R" 'proc-hist-rerun-as
   "k" 'proc-hist-kill
-  "o" 'proc-hist-open-log)
+  "o" 'proc-hist-open-log
+  "d" 'proc-hist-dired)
 
 (add-to-list 'embark-keymap-alist '(proc-hist . embark-proc-hist-map))
 
