@@ -20,6 +20,7 @@
     ("Shell"
      :commands (async-shell-command
                 project-async-shell-command
+                dired-do-async-shell-command
                 proc-hist--async-shell-command-rerun)
      :rerun proc-hist--async-shell-command-rerun
      :command proc-hist--shell-command-to-string
